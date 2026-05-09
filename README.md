@@ -1,5 +1,12 @@
 # Distributed System Lab
 
+## Usage
+
+```bash
+make test
+make test-race
+```
+
 ## Mini RPC
 
 Each Node has following functions:
