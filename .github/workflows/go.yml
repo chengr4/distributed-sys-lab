@@ -1,7 +1,7 @@
 # This workflow will build a golang project
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 
-name: Distibuted system Lab
+name: Distibuted System Lab
 
 on:
   push:
@@ -21,13 +21,19 @@ jobs:
       with:
         go-version: '1.26'
 
-    # - name: Build
-    #   run: go build -v ./...
+    - name: Standard Sequential Tests
+      run: make test
 
-    - name: Test with Coverage & Race Detection
+    - name: Concurrency & Test Coverage Report
       run: |
         make test-coverage > coverage_report.txt
         echo "### 📊 Test Coverage & Race Detection Report" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`text" >> $GITHUB_STEP_SUMMARY
         cat coverage_report.txt >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Cluster Integration Tests (run_cluster.sh)
+      working-directory: ./mini-rpc
+      run: |
+        chmod +x test_cluster.sh
+        ./test_cluster.sh
