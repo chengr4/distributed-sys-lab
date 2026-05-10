@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
+// TestCLIBasicFlow 測試基礎流程，包含未知指令與退出
 func TestCLIBasicFlow(t *testing.T) {
-	// Test case: Input an unknown command, then exit
 	input := "hello\nexit\n"
 	in := strings.NewReader(input)
 	out := &bytes.Buffer{}
@@ -24,8 +24,8 @@ func TestCLIBasicFlow(t *testing.T) {
 	}
 }
 
+// TestCLIDialFailure 測試連線到不存在的位址
 func TestCLIDialFailure(t *testing.T) {
-	// Test case: Attempt to connect to a non-existent address
 	input := "dial localhost:9999\nexit\n"
 	in := strings.NewReader(input)
 	out := &bytes.Buffer{}
@@ -39,9 +39,8 @@ func TestCLIDialFailure(t *testing.T) {
 	}
 }
 
-func TestCLINoConnectionWarning(t *testing.T) {
-	// Test case: Attempt to call getTime without a connection
-	input := "getTime\nexit\n"
+func TestCLIAddValidation(t *testing.T) {
+	input := "add hello world\nexit\n"
 	in := strings.NewReader(input)
 	out := &bytes.Buffer{}
 
@@ -49,7 +48,30 @@ func TestCLINoConnectionWarning(t *testing.T) {
 	cli.Run()
 
 	output := out.String()
-	if !strings.Contains(output, "Please execute 'dial'") {
-		t.Errorf("Expected connection prompt message, got: %q", output)
+	if !strings.Contains(output, "Error: Both arguments must be integers") {
+		t.Errorf("Expected validation error for non-integer inputs, got: %q", output)
+	}
+}
+
+func TestCLINoConnectionWarning(t *testing.T) {
+	commands := []string{
+		"getTime",
+		"add 1 2",
+		"read key",
+		"store k v",
+		"setNextNode localhost:8001",
+	}
+
+	for _, cmd := range commands {
+		input := cmd + "\nexit\n"
+		in := strings.NewReader(input)
+		out := &bytes.Buffer{}
+		cli := NewCLI(in, out)
+		cli.Run()
+
+		output := out.String()
+		if !strings.Contains(output, "Please execute 'dial'") {
+			t.Errorf("Command %q should show connection warning, got: %q", cmd, output)
+		}
 	}
 }

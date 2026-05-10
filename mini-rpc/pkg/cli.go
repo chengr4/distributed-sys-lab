@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // CLI struct encapsulates input, output, and remote connection state
@@ -29,7 +30,7 @@ func NewCLI(in io.Reader, out io.Writer) *CLI {
 func (c *CLI) Run() bool {
 	scanner := bufio.NewScanner(c.in)
 	fmt.Fprintln(c.out, "=== Go RPC Distributed System CLI ===")
-	fmt.Fprintln(c.out, "Available commands: dial <addr>, add <a> <b>, store <k> <v>, read <k>, getTime, exit")
+	fmt.Fprintln(c.out, "Available commands: dial <addr>, setNextNode <addr>, add <a> <b>, store <k> <v>, read <k>, getTime, exit")
 
 	for {
 		fmt.Fprint(c.out, "> ")
@@ -61,12 +62,28 @@ func (c *CLI) Run() bool {
 			c.remoteHandle = handle
 			fmt.Fprintf(c.out, "Successfully connected to %s\n", args[1])
 
+		case "setNextNode":
+			if len(args) < 2 {
+				fmt.Fprintln(c.out, "Usage: setNextNode <address:port>")
+				continue
+			}
+			if !c.checkConnection() {
+				continue
+			}
+			var reply SetNextNodeReply
+			err := c.callWithTimeout("KVService.SetNextNode", &SetNextNodeArgs{NextNodeAddr: args[1]}, &reply)
+			if err != nil {
+				fmt.Fprintf(c.out, "Call failed: %v\n", err)
+			} else {
+				fmt.Fprintf(c.out, "Server response: %s\n", reply.Message)
+			}
+
 		case "getTime":
 			if !c.checkConnection() {
 				continue
 			}
 			var reply GetTimeReply
-			err := c.remoteHandle.Call("KVService.GetTime", &GetTimeArgs{}, &reply)
+			err := c.callWithTimeout("KVService.GetTime", &GetTimeArgs{}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -74,14 +91,22 @@ func (c *CLI) Run() bool {
 			}
 
 		case "add":
-			if len(args) < 3 || !c.checkConnection() {
+			if len(args) < 3 {
 				fmt.Fprintln(c.out, "Usage: add <num1> <num2>")
 				continue
 			}
-			n1, _ := strconv.Atoi(args[1])
-			n2, _ := strconv.Atoi(args[2])
+			n1, err1 := strconv.Atoi(args[1])
+			n2, err2 := strconv.Atoi(args[2])
+			if err1 != nil || err2 != nil {
+				fmt.Fprintln(c.out, "Error: Both arguments must be integers")
+				continue
+			}
+			if !c.checkConnection() {
+				continue
+			}
+
 			var reply AddReply
-			err := c.remoteHandle.Call("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
+			err := c.callWithTimeout("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -89,12 +114,15 @@ func (c *CLI) Run() bool {
 			}
 
 		case "store":
-			if len(args) < 3 || !c.checkConnection() {
+			if len(args) < 3 {
 				fmt.Fprintln(c.out, "Usage: store <key> <value>")
 				continue
 			}
+			if !c.checkConnection() {
+				continue
+			}
 			var reply StoreReply
-			err := c.remoteHandle.Call("KVService.Store", &StoreArgs{Name: args[1], Value: args[2]}, &reply)
+			err := c.callWithTimeout("KVService.Store", &StoreArgs{Name: args[1], Value: args[2]}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -102,12 +130,15 @@ func (c *CLI) Run() bool {
 			}
 
 		case "read":
-			if len(args) < 2 || !c.checkConnection() {
+			if len(args) < 2 {
 				fmt.Fprintln(c.out, "Usage: read <key>")
 				continue
 			}
+			if !c.checkConnection() {
+				continue
+			}
 			var reply ReadReply
-			err := c.remoteHandle.Call("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
+			err := c.callWithTimeout("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else if !reply.Success {
@@ -129,4 +160,17 @@ func (c *CLI) checkConnection() bool {
 		return false
 	}
 	return true
+}
+
+func (c *CLI) callWithTimeout(serviceMethod string, args interface{}, reply interface{}) error {
+	if c.remoteHandle == nil {
+		return fmt.Errorf("not connected")
+	}
+	call := c.remoteHandle.Go(serviceMethod, args, reply, nil)
+	select {
+	case <-call.Done:
+		return call.Error
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("RPC call timed out after 5s")
+	}
 }
