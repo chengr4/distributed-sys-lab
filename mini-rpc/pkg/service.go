@@ -103,8 +103,23 @@ func (s *KVService) Add(args *AddArgs, reply *AddReply) error {
 
 	// Forwarding
 	if s.nextNodeHandle != nil {
-		log.Printf("[Server] Forwarding Add request to next node\n")
-		return s.nextNodeHandle.Call("KVService.Add", args, reply)
+		log.Printf("[Server] Async Forwarding Add request to next node\n")
+
+		call := s.nextNodeHandle.Go("KVService.Add", args, reply, nil)
+
+		select {
+		case <-call.Done:
+			// Successfully got the reply from the next node, return it to the client
+			if call.Error != nil {
+				log.Printf("[Server] Forwarding failed: %v\n", call.Error)
+				return call.Error
+			}
+			return nil
+		case <-time.After(3 * time.Second):
+			log.Printf("[Server] Forwarding timed out\n")
+			return fmt.Errorf("Forwarding timed out")
+		}
+
 	}
 
 	reply.Success = true

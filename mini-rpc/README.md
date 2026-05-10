@@ -67,6 +67,6 @@ To verify the dual-role capability (acting as both Server and Client), follow th
 - zip file: code, MakeFile, README (Instructions)
 - Demo in office hours
 
-## Rubric
+## Takeway
 
-- Node A successfully calls 4 functions and receives responses from Node B
+- `Go()` asynchronous vs `Call()` synchronous RPC calls.
