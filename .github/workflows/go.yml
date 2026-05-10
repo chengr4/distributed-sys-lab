@@ -32,8 +32,8 @@ jobs:
         cat coverage_report.txt >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-    - name: Cluster Integration Tests (run_cluster.sh)
+    - name: Cluster Integration Tests (test_cluster.sh)
       working-directory: ./mini-rpc
       run: |
-        chmod +x test_cluster.sh
+        chmod +x tests/test_cluster.sh
         ./tests/test_cluster.sh
