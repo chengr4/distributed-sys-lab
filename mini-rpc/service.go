@@ -53,12 +53,17 @@ type ReadReply struct {
 	Message string
 }
 
+type KVStore interface {
+	Set(key string, value string)
+	Get(key string) (string, bool)
+}
+
 type KVService struct {
-	storage        *Storage
+	storage        KVStore
 	nextNodeHandle *rpc.Client
 }
 
-func NewKVService(s *Storage) *KVService {
+func NewKVService(s KVStore) *KVService {
 	return &KVService{
 		storage: s,
 		// nextNode is nil until SetNextNode is called

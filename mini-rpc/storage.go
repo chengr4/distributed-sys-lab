@@ -14,7 +14,7 @@ func NewStorage() *Storage {
 	}
 }
 
-func (s *Storage) Set(key, value string) {
+func (s *Storage) Set(key string, value string) {
 	s.rwMu.Lock()
 	// unlock when the method returns
 	defer s.rwMu.Unlock()
