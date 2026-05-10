@@ -12,8 +12,9 @@ func startServer(port string) error {
 	storage := NewStorage()
 	service := NewKVService(storage)
 
-	// Register all methods of KVService that comply with rpc rules
-	err := rpc.Register(service)
+	// Create a private RPC server instance instead of using the global one
+	server := rpc.NewServer()
+	err := server.Register(service)
 	if err != nil {
 		return err
 	}
@@ -30,8 +31,8 @@ func startServer(port string) error {
 			continue
 		}
 
-		// keep reading rpc requests from the connection until it is closed
-		go rpc.ServeConn(conn)
+		// Use the private server instance to handle connections
+		go server.ServeConn(conn)
 	}
 }
 
@@ -52,5 +53,13 @@ func main() {
 
 	// Start CLI in the foreground
 	cli := NewCLI(os.Stdin, os.Stdout)
-	cli.Run()
+	shouldExit := cli.Run()
+
+	// If the user explicitly typed 'exit', terminate the process.
+	// Otherwise (e.g., EOF on background node), keep the server alive.
+	if shouldExit {
+		os.Exit(0)
+	}
+
+	select {}
 }

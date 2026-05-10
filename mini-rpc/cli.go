@@ -24,8 +24,9 @@ func NewCLI(in io.Reader, out io.Writer) *CLI {
 	}
 }
 
-// Run starts the CLI main loop
-func (c *CLI) Run() {
+// Run starts the CLI main loop. Returns true if the user explicitly exits,
+// false if the input stream ends (EOF).
+func (c *CLI) Run() bool {
 	scanner := bufio.NewScanner(c.in)
 	fmt.Fprintln(c.out, "=== Go RPC Distributed System CLI ===")
 	fmt.Fprintln(c.out, "Available commands: dial <addr>, add <a> <b>, store <k> <v>, read <k>, getTime, exit")
@@ -45,7 +46,7 @@ func (c *CLI) Run() {
 		switch args[0] {
 		case "exit":
 			fmt.Fprintln(c.out, "Goodbye!")
-			return
+			return true
 
 		case "dial":
 			if len(args) < 2 {
@@ -119,6 +120,7 @@ func (c *CLI) Run() {
 			fmt.Fprintln(c.out, "Unknown command")
 		}
 	}
+	return false
 }
 
 func (c *CLI) checkConnection() bool {
