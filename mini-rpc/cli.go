@@ -11,9 +11,9 @@ import (
 
 // CLI struct encapsulates input, output, and remote connection state
 type CLI struct {
-	client *rpc.Client
-	in     io.Reader
-	out    io.Writer
+	remoteHandle *rpc.Client
+	in           io.Reader
+	out          io.Writer
 }
 
 // NewCLI creates a new CLI instance with dependency injection support
@@ -53,12 +53,12 @@ func (c *CLI) Run() bool {
 				fmt.Fprintln(c.out, "Usage: dial <address:port>")
 				continue
 			}
-			client, err := rpc.Dial("tcp", args[1])
+			handle, err := rpc.Dial("tcp", args[1])
 			if err != nil {
 				fmt.Fprintf(c.out, "Dial failed: %v\n", err)
 				continue
 			}
-			c.client = client
+			c.remoteHandle = handle
 			fmt.Fprintf(c.out, "Successfully connected to %s\n", args[1])
 
 		case "getTime":
@@ -66,7 +66,7 @@ func (c *CLI) Run() bool {
 				continue
 			}
 			var reply GetTimeReply
-			err := c.client.Call("KVService.GetTime", &GetTimeArgs{}, &reply)
+			err := c.remoteHandle.Call("KVService.GetTime", &GetTimeArgs{}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -81,7 +81,7 @@ func (c *CLI) Run() bool {
 			n1, _ := strconv.Atoi(args[1])
 			n2, _ := strconv.Atoi(args[2])
 			var reply AddReply
-			err := c.client.Call("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
+			err := c.remoteHandle.Call("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -94,7 +94,7 @@ func (c *CLI) Run() bool {
 				continue
 			}
 			var reply StoreReply
-			err := c.client.Call("KVService.Store", &StoreArgs{Name: args[1], Value: args[2]}, &reply)
+			err := c.remoteHandle.Call("KVService.Store", &StoreArgs{Name: args[1], Value: args[2]}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -107,7 +107,7 @@ func (c *CLI) Run() bool {
 				continue
 			}
 			var reply ReadReply
-			err := c.client.Call("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
+			err := c.remoteHandle.Call("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else if !reply.Success {
@@ -124,7 +124,7 @@ func (c *CLI) Run() bool {
 }
 
 func (c *CLI) checkConnection() bool {
-	if c.client == nil {
+	if c.remoteHandle == nil {
 		fmt.Fprintln(c.out, "Please execute 'dial' to connect to a node first")
 		return false
 	}
