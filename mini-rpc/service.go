@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/rpc"
 	"time"
 )
 
@@ -14,6 +15,15 @@ type AddArgs struct {
 type AddReply struct {
 	Success bool
 	Result  int
+}
+
+type SetNextNodeArgs struct {
+	NextNodeAddr string
+}
+
+type SetNextNodeReply struct {
+	Success bool
+	Message string
 }
 
 type GetTimeArgs struct{}
@@ -44,12 +54,14 @@ type ReadReply struct {
 }
 
 type KVService struct {
-	storage *Storage
+	storage        *Storage
+	nextNodeHandle *rpc.Client
 }
 
 func NewKVService(s *Storage) *KVService {
 	return &KVService{
 		storage: s,
+		// nextNode is nil until SetNextNode is called
 	}
 }
 
@@ -84,6 +96,12 @@ func (s *KVService) Read(args *ReadArgs, reply *ReadReply) error {
 func (s *KVService) Add(args *AddArgs, reply *AddReply) error {
 	log.Printf("[Server] Got Add request: %d + %d\n", args.Num1, args.Num2)
 
+	// Forwarding
+	if s.nextNodeHandle != nil {
+		log.Printf("[Server] Forwarding Add request to next node\n")
+		return s.nextNodeHandle.Call("KVService.Add", args, reply)
+	}
+
 	reply.Success = true
 	reply.Result = args.Num1 + args.Num2
 
@@ -96,6 +114,23 @@ func (s *KVService) GetTime(args *GetTimeArgs, reply *GetTimeReply) error {
 	reply.Success = true
 	//RFC3339: 2026-05-08T15:04:05Z
 	reply.Time = time.Now().Format(time.RFC3339)
+
+	return nil
+}
+
+func (s *KVService) SetNextNode(args *SetNextNodeArgs, reply *SetNextNodeReply) error {
+	log.Printf("[Server] Setting up the connection to the next node: %s", args.NextNodeAddr)
+
+	nextNodeHandle, err := rpc.Dial("tcp", args.NextNodeAddr)
+	if err != nil {
+		reply.Success = false
+		reply.Message = fmt.Sprintf("Failed to connect to next node: %v", err)
+		return nil
+	}
+
+	s.nextNodeHandle = nextNodeHandle
+	reply.Success = true
+	reply.Message = fmt.Sprintf("Successfully connected to next node: %s", args.NextNodeAddr)
 
 	return nil
 }
