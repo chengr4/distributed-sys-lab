@@ -5,6 +5,7 @@
 ```bash
 make test
 make test-race
+make test-coverage
 ```
 
 ## Mini RPC

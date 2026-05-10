@@ -12,6 +12,7 @@ Each Node has:
 ```bash
 go test -v
 go test -race
+go test -cover ./...
 go run . -port 1234
 ```
 
