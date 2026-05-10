@@ -13,6 +13,7 @@ Each Node has:
 go test -v
 go test -race
 go test -cover ./...
+
 go run . -port 1234
 ```
 

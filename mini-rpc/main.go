@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/rpc"
+	"os"
 )
 
 func startServer(port string) error {
@@ -42,7 +43,14 @@ func main() {
 
 	log.Printf("[Node] The server starts, listening to Port %s...\n", *port)
 
-	if err := startServer(*port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
+	// Start Server in the background
+	go func() {
+		if err := startServer(*port); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Start CLI in the foreground
+	cli := NewCLI(os.Stdin, os.Stdout)
+	cli.Run()
 }

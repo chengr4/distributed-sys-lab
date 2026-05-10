@@ -9,14 +9,14 @@ import (
 	"strings"
 )
 
-// CLI 結構體封裝了輸入、輸出與對外連線狀態
+// CLI struct encapsulates input, output, and remote connection state
 type CLI struct {
 	client *rpc.Client
 	in     io.Reader
 	out    io.Writer
 }
 
-// NewCLI 建立一個新的 CLI 實例，支援相依性注入
+// NewCLI creates a new CLI instance with dependency injection support
 func NewCLI(in io.Reader, out io.Writer) *CLI {
 	return &CLI{
 		in:  in,
@@ -24,11 +24,11 @@ func NewCLI(in io.Reader, out io.Writer) *CLI {
 	}
 }
 
-// Run 啟動 CLI 迴圈
+// Run starts the CLI main loop
 func (c *CLI) Run() {
 	scanner := bufio.NewScanner(c.in)
 	fmt.Fprintln(c.out, "=== Go RPC Distributed System CLI ===")
-	fmt.Fprintln(c.out, "可用指令: dial <addr>, add <a> <b>, store <k> <v>, read <k>, getTime, exit")
+	fmt.Fprintln(c.out, "Available commands: dial <addr>, add <a> <b>, store <k> <v>, read <k>, getTime, exit")
 
 	for {
 		fmt.Fprint(c.out, "> ")
@@ -49,16 +49,16 @@ func (c *CLI) Run() {
 
 		case "dial":
 			if len(args) < 2 {
-				fmt.Fprintln(c.out, "用法: dial <位址:連接埠>")
+				fmt.Fprintln(c.out, "Usage: dial <address:port>")
 				continue
 			}
 			client, err := rpc.Dial("tcp", args[1])
 			if err != nil {
-				fmt.Fprintf(c.out, "連線失敗: %v\n", err)
+				fmt.Fprintf(c.out, "Dial failed: %v\n", err)
 				continue
 			}
 			c.client = client
-			fmt.Fprintf(c.out, "成功連線至 %s\n", args[1])
+			fmt.Fprintf(c.out, "Successfully connected to %s\n", args[1])
 
 		case "getTime":
 			if !c.checkConnection() {
@@ -67,14 +67,14 @@ func (c *CLI) Run() {
 			var reply GetTimeReply
 			err := c.client.Call("KVService.GetTime", &GetTimeArgs{}, &reply)
 			if err != nil {
-				fmt.Fprintf(c.out, "呼叫失敗: %v\n", err)
+				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
-				fmt.Fprintf(c.out, "伺服器時間: %s\n", reply.Time)
+				fmt.Fprintf(c.out, "Server time: %s\n", reply.Time)
 			}
 
 		case "add":
 			if len(args) < 3 || !c.checkConnection() {
-				fmt.Fprintln(c.out, "用法: add <數字1> <數字2>")
+				fmt.Fprintln(c.out, "Usage: add <num1> <num2>")
 				continue
 			}
 			n1, _ := strconv.Atoi(args[1])
@@ -82,48 +82,48 @@ func (c *CLI) Run() {
 			var reply AddReply
 			err := c.client.Call("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
 			if err != nil {
-				fmt.Fprintf(c.out, "呼叫失敗: %v\n", err)
+				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
-				fmt.Fprintf(c.out, "計算結果: %d\n", reply.Result)
+				fmt.Fprintf(c.out, "Calculation result: %d\n", reply.Result)
 			}
 
 		case "store":
 			if len(args) < 3 || !c.checkConnection() {
-				fmt.Fprintln(c.out, "用法: store <鍵> <值>")
+				fmt.Fprintln(c.out, "Usage: store <key> <value>")
 				continue
 			}
 			var reply StoreReply
 			err := c.client.Call("KVService.Store", &StoreArgs{Name: args[1], Value: args[2]}, &reply)
 			if err != nil {
-				fmt.Fprintf(c.out, "呼叫失敗: %v\n", err)
+				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
-				fmt.Fprintf(c.out, "伺服器回應: %s\n", reply.Message)
+				fmt.Fprintf(c.out, "Server response: %s\n", reply.Message)
 			}
 
 		case "read":
 			if len(args) < 2 || !c.checkConnection() {
-				fmt.Fprintln(c.out, "用法: read <鍵>")
+				fmt.Fprintln(c.out, "Usage: read <key>")
 				continue
 			}
 			var reply ReadReply
 			err := c.client.Call("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
 			if err != nil {
-				fmt.Fprintf(c.out, "呼叫失敗: %v\n", err)
+				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else if !reply.Success {
-				fmt.Fprintf(c.out, "錯誤: %s\n", reply.Message)
+				fmt.Fprintf(c.out, "Error: %s\n", reply.Message)
 			} else {
-				fmt.Fprintf(c.out, "讀取結果: %s (%s)\n", reply.Value, reply.Message)
+				fmt.Fprintf(c.out, "Read result: %s (%s)\n", reply.Value, reply.Message)
 			}
 
 		default:
-			fmt.Fprintln(c.out, "未知指令")
+			fmt.Fprintln(c.out, "Unknown command")
 		}
 	}
 }
 
 func (c *CLI) checkConnection() bool {
 	if c.client == nil {
-		fmt.Fprintln(c.out, "請先執行 dial 連線至節點")
+		fmt.Fprintln(c.out, "Please execute 'dial' to connect to a node first")
 		return false
 	}
 	return true
