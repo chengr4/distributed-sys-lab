@@ -36,4 +36,4 @@ jobs:
       working-directory: ./mini-rpc
       run: |
         chmod +x test_cluster.sh
-        ./test_cluster.sh
+        ./tests/test_cluster.sh

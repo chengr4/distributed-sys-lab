@@ -4,6 +4,7 @@ import (
 	"net/rpc"
 	"testing"
 	"time"
+	"mini-rpc/pkg"
 )
 
 func TestServerStartup(t *testing.T) {
@@ -19,8 +20,8 @@ func TestServerStartup(t *testing.T) {
 	}
 	defer client.Close()
 
-	args := &GetTimeArgs{}
-	reply := &GetTimeReply{}
+	args := &minirpc.GetTimeArgs{}
+	reply := &minirpc.GetTimeReply{}
 
 	err = client.Call("KVService.GetTime", args, reply)
 	if err != nil {
