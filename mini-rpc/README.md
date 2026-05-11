@@ -7,6 +7,16 @@ Each Node has:
 3. `add(num1, num2)`
 4. `getTime()`
 
+## Features
+
+- **Dual-Role Nodes**: Each process acts as both an RPC Server (offering services) and a Client (invoking services).
+- **Interactive CLI**: Every node provides a real-time command-line interface for manual testing and network management.
+- **Dynamic Chaining**: Supports multi-hop RPC calls (e.g., A -> B -> C -> D) with dynamic topology configuration via `setNextNode`.
+- **Robust Error Handling**: Comprehensive validation for parameters and graceful handling of missing keys or network failures.
+- **Timeout Protection**: Integrated timeout mechanism for all remote calls to prevent system hanging and ensure resource availability.
+- **Thread-Safe Storage**: High-performance, concurrent-safe key-value storage implemented with `RWMutex`.
+- **Clean Architecture**: Decoupled design using interfaces (DIP) and adapters for superior testability and maintainability.
+
 ## Usage
 
 ```bash
@@ -45,28 +55,27 @@ To verify the dual-role capability (acting as both Server and Client), follow th
 
 ## TODO
 
-- [ ] **Test 2: Chain RPC Demo** (Node A -> Node B -> Node C)
-    - [ ] Implement `SetNextNode` to establish chains dynamically.
-    - [ ] Add forwarding logic to `Add` (or other methods).
-    - [ ] Explore and implement **Asynchronous Forwarding** to improve chain efficiency.
-- [ ] **Test 3: Concurrent Calls Demo**
-    - [ ] Verify thread-safety of `Storage`.
-    - [ ] Add parallel test cases or CLI stress testing.
-- [ ] **Test 4: Timeouts & Failures**
-    - [ ] Implement timeout mechanism for RPC calls.
-    - [ ] Improve error handling for invalid parameters or missing keys.
+- [ ] Add forwarding logic to `store` and `read`.
+- [ ] Explore and implement **Asynchronous Forwarding** to improve chain efficiency.
 - [ ] Add cycle detection or `HopLimit` to prevent infinite forwarding.
 
-## Folder Architecture
+## Codebase Architecture
+
+### Folder
 
 - `tests`: All integration tests for the mini RPC system.
 - `pkg`: Core implementation of the mini RPC system
 
-## Submission
+### Clean Architecture
 
-- zip file: code, MakeFile, README (Instructions)
-- Demo in office hours
+- Domain/Logic:
+    - `service.go` (Use case), `requester.go`
+    - `storage.go`: It might move to outer layer in the future
+- Infrastructure/Adapter:
+    - `rpc_adapter.go`: Implements interface
+    - `cli.go`: User interface
+    - `server.go`
 
-## Takeway
+## Takeaway
 
 - `Go()` asynchronous vs `Call()` synchronous RPC calls.
