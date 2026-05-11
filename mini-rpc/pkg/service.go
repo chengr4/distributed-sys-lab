@@ -148,6 +148,14 @@ func (s *KVService) GetTime(args *GetTimeArgs, reply *GetTimeReply) error {
 func (s *KVService) SetNextNode(args *SetNextNodeArgs, reply *SetNextNodeReply) error {
 	log.Printf("[Server] Received SetNextNode request. Target: %s\n", args.NextNodeAddr)
 
+	// Validation
+	if args.NextNodeAddr == "" {
+		log.Printf("[Server] SetNextNode failed: Address is empty.\n")
+		reply.Success = false
+		reply.Message = "Next node address cannot be empty"
+		return nil
+	}
+
 	log.Printf("[Server] Attempting to establish TCP connection via RPC Dial...\n")
 	nextNode, err := s.dialer.Dial(args.NextNodeAddr)
 	if err != nil {
