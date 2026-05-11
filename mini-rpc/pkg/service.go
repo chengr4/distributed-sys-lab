@@ -77,6 +77,14 @@ func NewKVService(s KVStore, d Dialer) *KVService {
 func (s *KVService) Store(args *StoreArgs, reply *StoreReply) error {
 	log.Printf("[Server] Received Store request: Key=%s, Value=%s\n", args.Name, args.Value)
 
+	// Validation
+	if args.Name == "" {
+		log.Printf("[Server] Store failed: Key is empty.\n")
+		reply.Success = false
+		reply.Message = "Key cannot be empty"
+		return nil
+	}
+
 	log.Printf("[Server] Executing local storage set operation.\n")
 	s.storage.Set(args.Name, args.Value)
 
