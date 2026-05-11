@@ -3,7 +3,6 @@ package minirpc
 import (
 	"fmt"
 	"log"
-	"net/rpc"
 	"time"
 )
 
@@ -60,12 +59,17 @@ type KVStore interface {
 
 type KVService struct {
 	storage        KVStore
+	dialer         Dialer
 	nextNodeHandle RemoteRequester
 }
 
-func NewKVService(s KVStore) *KVService {
+func NewKVService(s KVStore, d Dialer) *KVService {
+	if d == nil {
+		panic("dialer is required for KVService")
+	}
 	return &KVService{
 		storage: s,
+		dialer:  d,
 		// nextNode is nil until SetNextNode is called
 	}
 }
@@ -137,7 +141,7 @@ func (s *KVService) SetNextNode(args *SetNextNodeArgs, reply *SetNextNodeReply) 
 	log.Printf("[Server] Received SetNextNode request. Target: %s\n", args.NextNodeAddr)
 
 	log.Printf("[Server] Attempting to establish TCP connection via RPC Dial...\n")
-	nextNodeHandle, err := rpc.Dial("tcp", args.NextNodeAddr)
+	nextNode, err := s.dialer.Dial(args.NextNodeAddr)
 	if err != nil {
 		log.Printf("[Server] Connection failed: %v\n", err)
 		reply.Success = false
@@ -146,7 +150,7 @@ func (s *KVService) SetNextNode(args *SetNextNodeArgs, reply *SetNextNodeReply) 
 	}
 
 	// TO FIX: Inner layer depends on outer layer
-	s.nextNodeHandle = NewRPCAdapter(nextNodeHandle, 3*time.Second)
+	s.nextNodeHandle = nextNode
 	reply.Success = true
 	reply.Message = fmt.Sprintf("Successfully connected to next node: %s", args.NextNodeAddr)
 	log.Printf("[Server] Connection established and stored. Sending success confirmation.\n")

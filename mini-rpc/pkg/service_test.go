@@ -2,9 +2,13 @@ package minirpc
 
 import "testing"
 
+type MockDialer struct {
+	CalledWithAddr string
+}
+
 func TestKVServiceStore(t *testing.T) {
 	storage := NewStorage()
-	service := NewKVService(storage)
+	service := NewKVService(storage, &MockDialer{})
 
 	// net/rpc sets a policy that if you want other node to call your function
 	// your should only have one parameter and one return
@@ -34,7 +38,7 @@ func TestKVServiceStore(t *testing.T) {
 
 func TestKVServiceRead(t *testing.T) {
 	storage := NewStorage()
-	service := NewKVService(storage)
+	service := NewKVService(storage, &MockDialer{})
 
 	storage.Set("task", "finish-rpc")
 
@@ -56,7 +60,7 @@ func TestKVServiceRead(t *testing.T) {
 }
 
 func TestKVServiceAdd(t *testing.T) {
-	service := NewKVService(nil)
+	service := NewKVService(nil, &MockDialer{})
 
 	// These two are communication contract
 	args := &AddArgs{
@@ -79,7 +83,7 @@ func TestKVServiceAdd(t *testing.T) {
 }
 
 func TestKVServiceGetTime(t *testing.T) {
-	service := NewKVService(nil)
+	service := NewKVService(nil, &MockDialer{})
 
 	args := &GetTimeArgs{}
 	reply := &GetTimeReply{}
@@ -98,10 +102,6 @@ func TestKVServiceGetTime(t *testing.T) {
 	t.Logf("T_{server}: %s", reply.Time)
 }
 
-type MockDialer struct {
-	CalledWithAddr string
-}
-
 func (m *MockDialer) Dial(addr string) (RemoteRequester, error) {
 	m.CalledWithAddr = addr
 
@@ -111,7 +111,7 @@ func (m *MockDialer) Dial(addr string) (RemoteRequester, error) {
 func TestService_SetNextNode_NoNetwork(t *testing.T) {
 	mockDialer := &MockDialer{}
 
-	service := NewKVService(&InMemoryStorage{}, mockDialer)
+	service := NewKVService(nil, mockDialer)
 
 	args := &SetNextNodeArgs{NextNodeAddr: "localhost:9999"}
 	reply := &SetNextNodeReply{}

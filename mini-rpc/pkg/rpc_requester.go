@@ -34,3 +34,16 @@ func (r *RPCAdapter) CallRemote(serviceMethod string, args any, reply any) error
 		return fmt.Errorf("RPC call timed out after %s", r.timeout)
 	}
 }
+
+type RPCDialer struct {
+	DefaultTimeout time.Duration
+}
+
+func (d *RPCDialer) Dial(addr string) (RemoteRequester, error) {
+	remoteHandle, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial RPC server at %s: %v", addr, err)
+	}
+
+	return NewRPCAdapter(remoteHandle, d.DefaultTimeout), nil
+}
