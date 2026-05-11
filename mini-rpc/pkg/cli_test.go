@@ -2,6 +2,7 @@ package minirpc
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -73,5 +74,24 @@ func TestCLINoConnectionWarning(t *testing.T) {
 		if !strings.Contains(output, "Please execute 'dial'") {
 			t.Errorf("Command %q should show connection warning, got: %q", cmd, output)
 		}
+	}
+}
+
+type MockTimeoutRequester struct{}
+
+func (m *MockTimeoutRequester) CallRemote(serviceMethod string, args interface{}, reply interface{}) error {
+	return errors.New("RPC call timed out")
+}
+
+func TestCLIRemoteTimeout(t *testing.T) {
+	in := strings.NewReader("add 1 2\nexit\n")
+	out := &bytes.Buffer{}
+	mock := &MockTimeoutRequester{}
+
+	cli := NewCLI(in, out, mock)
+	cli.Run()
+
+	if !strings.Contains(out.String(), "RPC call timed out") {
+		t.Errorf("Expected timeout message, got: %q", out.String())
 	}
 }
