@@ -2,6 +2,7 @@ package minirpc
 
 import (
 	"fmt"
+	"log"
 	"net/rpc"
 	"time"
 )
@@ -24,13 +25,20 @@ func (r *RPCAdapter) CallRemote(serviceMethod string, args any, reply any) error
 		return fmt.Errorf("RPC client is not initialized (not connected)")
 	}
 
+	log.Printf("[Client] Message prepared for %s\n", serviceMethod)
+	log.Printf("[Client] Sending request to %s...\n", serviceMethod)
+
 	call := r.remoteHandle.Go(serviceMethod, args, reply, nil)
 	select {
 	case <-call.Done:
-		// Successfully Called
-		return call.Error
+		if call.Error != nil {
+			log.Printf("[Client] Response received from %s with error: %v\n", serviceMethod, call.Error)
+			return call.Error
+		}
+		log.Printf("[Client] Response received from %s successfully\n", serviceMethod)
+		return nil
 	case <-time.After(r.timeout):
-		// Timeout
+		log.Printf("[Client] RPC call to %s timed out after %s\n", serviceMethod, r.timeout)
 		return fmt.Errorf("RPC call timed out after %s", r.timeout)
 	}
 }
