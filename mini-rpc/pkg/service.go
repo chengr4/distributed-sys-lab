@@ -60,7 +60,7 @@ type KVStore interface {
 
 type KVService struct {
 	storage        KVStore
-	nextNodeHandle *rpc.Client
+	nextNodeHandle RemoteRequester
 }
 
 func NewKVService(s KVStore) *KVService {
@@ -108,24 +108,9 @@ func (s *KVService) Add(args *AddArgs, reply *AddReply) error {
 
 	// Forwarding
 	if s.nextNodeHandle != nil {
-		log.Printf("[Server] Next node detected. Preparing to forward request...\n")
+		log.Printf("[Server] Next node detected. Forwarding request sent to next node\n")
 
-		call := s.nextNodeHandle.Go("KVService.Add", args, reply, nil)
-		log.Printf("[Server] Forwarding request sent to next node.\n")
-
-		select {
-		case <-call.Done:
-			// Successfully got the reply from the next node, return it to the client
-			if call.Error != nil {
-				log.Printf("[Server] Forwarding failed with error: %v\n", call.Error)
-				return call.Error
-			}
-			log.Printf("[Server] Received successful response from downstream node. Passing it back.\n")
-			return nil
-		case <-time.After(3 * time.Second):
-			log.Printf("[Server] CRITICAL: Forwarding request timed out after 3 seconds.\n")
-			return fmt.Errorf("Forwarding timed out")
-		}
+		return s.nextNodeHandle.CallRemote("KVService.Add", args, reply)
 
 	}
 
@@ -160,7 +145,8 @@ func (s *KVService) SetNextNode(args *SetNextNodeArgs, reply *SetNextNodeReply) 
 		return nil
 	}
 
-	s.nextNodeHandle = nextNodeHandle
+	// TO FIX: Inner layer depends on outer layer
+	s.nextNodeHandle = NewRPCAdapter(nextNodeHandle, 3*time.Second)
 	reply.Success = true
 	reply.Message = fmt.Sprintf("Successfully connected to next node: %s", args.NextNodeAddr)
 	log.Printf("[Server] Connection established and stored. Sending success confirmation.\n")

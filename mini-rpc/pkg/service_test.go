@@ -97,3 +97,30 @@ func TestKVServiceGetTime(t *testing.T) {
 
 	t.Logf("T_{server}: %s", reply.Time)
 }
+
+type MockDialer struct {
+	CalledWithAddr string
+}
+
+func (m *MockDialer) Dial(addr string) (RemoteRequester, error) {
+	m.CalledWithAddr = addr
+
+	return &MockTimeoutRequester{}, nil
+}
+
+func TestService_SetNextNode_NoNetwork(t *testing.T) {
+	mockDialer := &MockDialer{}
+
+	service := NewKVService(&InMemoryStorage{}, mockDialer)
+
+	args := &SetNextNodeArgs{NextNodeAddr: "localhost:9999"}
+	reply := &SetNextNodeReply{}
+	err := service.SetNextNode(args, reply)
+	if err != nil || !reply.Success {
+		t.Errorf("Expected success, got error: %v, reply: %+v", err, reply)
+	}
+
+	if mockDialer.CalledWithAddr != "localhost:9999" {
+		t.Errorf("Expected dialer to be called with 'localhost:9999', got: %s", mockDialer.CalledWithAddr)
+	}
+}
