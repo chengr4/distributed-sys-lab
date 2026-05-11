@@ -7,7 +7,6 @@ import (
 	"testing"
 )
 
-// TestCLIBasicFlow 測試基礎流程，包含未知指令與退出
 func TestCLIBasicFlow(t *testing.T) {
 	input := "hello\nexit\n"
 	in := strings.NewReader(input)
@@ -25,7 +24,6 @@ func TestCLIBasicFlow(t *testing.T) {
 	}
 }
 
-// TestCLIDialFailure 測試連線到不存在的位址
 func TestCLIDialFailure(t *testing.T) {
 	input := "dial localhost:9999\nexit\n"
 	in := strings.NewReader(input)
@@ -88,7 +86,8 @@ func TestCLIRemoteTimeout(t *testing.T) {
 	out := &bytes.Buffer{}
 	mock := &MockTimeoutRequester{}
 
-	cli := NewCLI(in, out, mock)
+	cli := NewCLI(in, out)
+	cli.remoteRequester = mock
 	cli.Run()
 
 	if !strings.Contains(out.String(), "RPC call timed out") {

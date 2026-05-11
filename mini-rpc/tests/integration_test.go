@@ -2,10 +2,10 @@ package tests
 
 import (
 	"bytes"
+	"mini-rpc/pkg"
 	"strings"
 	"testing"
 	"time"
-	"mini-rpc/pkg"
 )
 
 // TestDualRoleSelfCall verifies that a single process can act as both
@@ -33,7 +33,7 @@ func TestDualRoleSelfCall(t *testing.T) {
 
 	// 3. Verify the output
 	output := out.String()
-	
+
 	if !strings.Contains(output, "Successfully connected") {
 		t.Errorf("CLI failed to connect. Output:\n%s", output)
 	}
