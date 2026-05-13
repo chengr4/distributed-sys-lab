@@ -8,7 +8,7 @@ import (
 )
 
 // StartServer initializes the storage and service, and starts listening for RPC connections.
-func StartServer(port string) error {
+func StartServer(port string) (*KVService, error) {
 	storage := NewStorage()
 	server_dialer := &RPCDialer{
 		ConnectTimeout: 2 * time.Second,
@@ -20,23 +20,27 @@ func StartServer(port string) error {
 	server := rpc.NewServer()
 	err := server.Register(service)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// We don't close listener here because it needs to run forever
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Accept failed: %v", err)
-			continue
-		}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Printf("Accept failed: %v", err)
+				continue
+			}
 
-		// Use the private server instance to handle connections
-		go server.ServeConn(conn)
-	}
+			// Use the private server instance to handle connections
+			go server.ServeConn(conn)
+		}
+	}()
+
+	return service, nil
 }

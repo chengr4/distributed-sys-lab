@@ -10,19 +10,22 @@ import (
 
 // CLI struct encapsulates input, output, and remote connection state
 type CLI struct {
-	in              io.Reader
-	out             io.Writer
-	dialer          Dialer
-	remoteRequester RemoteRequester
+	in            io.Reader
+	out           io.Writer
+	dialer        Dialer
+	serviceClient RemoteRequester
+	//
+	localServerController *LocalAdapter
 }
 
 // NewCLI creates a new CLI instance with dependency injection support
-func NewCLI(in io.Reader, out io.Writer, d Dialer) *CLI {
+func NewCLI(in io.Reader, out io.Writer, d Dialer, controller *LocalAdapter) *CLI {
 	return &CLI{
-		in:              in,
-		out:             out,
-		dialer:          d,
-		remoteRequester: NotConnectedRequester{},
+		in:                    in,
+		out:                   out,
+		dialer:                d,
+		serviceClient:         NotConnectedRequester{},
+		localServerController: controller,
 	}
 }
 
@@ -60,7 +63,7 @@ func (c *CLI) Run() bool {
 				fmt.Fprintf(c.out, "Dial failed: %v\n", err)
 				continue
 			}
-			c.remoteRequester = remoteHandle
+			c.serviceClient = remoteHandle
 			fmt.Fprintf(c.out, "Successfully connected to %s\n", args[1])
 
 		case "setNextNode":
@@ -69,7 +72,7 @@ func (c *CLI) Run() bool {
 				continue
 			}
 			var reply SetNextNodeReply
-			err := c.remoteRequester.CallRemote("KVService.SetNextNode", &SetNextNodeArgs{NextNodeAddr: args[1]}, &reply)
+			err := c.localServerController.CallRemote("KVService.SetNextNode", &SetNextNodeArgs{NextNodeAddr: args[1]}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -78,7 +81,7 @@ func (c *CLI) Run() bool {
 
 		case "getTime":
 			var reply GetTimeReply
-			err := c.remoteRequester.CallRemote("KVService.GetTime", &GetTimeArgs{}, &reply)
+			err := c.serviceClient.CallRemote("KVService.GetTime", &GetTimeArgs{}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -98,7 +101,7 @@ func (c *CLI) Run() bool {
 			}
 
 			var reply AddReply
-			err := c.remoteRequester.CallRemote("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
+			err := c.serviceClient.CallRemote("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -112,7 +115,7 @@ func (c *CLI) Run() bool {
 			}
 			var reply StoreReply
 			value := strings.Join(args[2:], " ")
-			err := c.remoteRequester.CallRemote("KVService.Store", &StoreArgs{Name: args[1], Value: value}, &reply)
+			err := c.serviceClient.CallRemote("KVService.Store", &StoreArgs{Name: args[1], Value: value}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {
@@ -125,7 +128,7 @@ func (c *CLI) Run() bool {
 				continue
 			}
 			var reply ReadReply
-			err := c.remoteRequester.CallRemote("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
+			err := c.serviceClient.CallRemote("KVService.Read", &ReadArgs{Name: args[1]}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else if !reply.Success {

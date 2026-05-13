@@ -24,7 +24,7 @@ func TestCLIBasicFlow(t *testing.T) {
 	in := strings.NewReader(input)
 	out := &bytes.Buffer{}
 
-	cli := NewCLI(in, out, &MockDialer{})
+	cli := NewCLI(in, out, &MockDialer{}, nil)
 	cli.Run()
 
 	output := out.String()
@@ -43,7 +43,7 @@ func TestCLIDialFailure(t *testing.T) {
 
 	// Create a dialer that always fails
 	mockDialer := &MockDialerWithErr{Err: errors.New("connection refused")}
-	cli := NewCLI(in, out, mockDialer)
+	cli := NewCLI(in, out, mockDialer, nil)
 	cli.Run()
 
 	output := out.String()
@@ -65,7 +65,7 @@ func TestCLIAddValidation(t *testing.T) {
 	in := strings.NewReader(input)
 	out := &bytes.Buffer{}
 
-	cli := NewCLI(in, out, &MockDialer{})
+	cli := NewCLI(in, out, &MockDialer{}, nil)
 	cli.Run()
 
 	output := out.String()
@@ -87,7 +87,7 @@ func TestCLINoConnectionMessage(t *testing.T) {
 		input := cmd + "\nexit\n"
 		in := strings.NewReader(input)
 		out := &bytes.Buffer{}
-		cli := NewCLI(in, out, &MockDialer{})
+		cli := NewCLI(in, out, &MockDialer{}, nil)
 		cli.Run()
 
 		output := out.String()
@@ -116,8 +116,8 @@ func TestCLIStoreSentence(t *testing.T) {
 		},
 	}
 
-	cli := NewCLI(in, out, &MockDialer{})
-	cli.remoteRequester = mock
+	cli := NewCLI(in, out, &MockDialer{}, nil)
+	cli.serviceClient = mock
 	cli.Run()
 
 	expected := "this is a long sentence"
@@ -135,8 +135,8 @@ func TestCLIRemoteTimeout(t *testing.T) {
 		},
 	}
 
-	cli := NewCLI(in, out, &MockDialer{})
-	cli.remoteRequester = mock
+	cli := NewCLI(in, out, &MockDialer{}, nil)
+	cli.serviceClient = mock
 	cli.Run()
 
 	if !strings.Contains(out.String(), "RPC call timed out") {

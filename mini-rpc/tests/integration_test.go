@@ -15,7 +15,7 @@ func TestDualRoleSelfCall(t *testing.T) {
 
 	// 1. Start the RPC Server in the background using the library
 	go func() {
-		if err := minirpc.StartServer(port); err != nil {
+		if _, err := minirpc.StartServer(port); err != nil {
 			t.Logf("Background server stopped: %v", err)
 		}
 	}()
@@ -31,7 +31,7 @@ func TestDualRoleSelfCall(t *testing.T) {
 	cli := minirpc.NewCLI(in, out, &minirpc.RPCDialer{
 		ConnectTimeout: 1 * time.Second,
 		RequestTimeout: 1 * time.Second,
-	})
+	}, nil)
 	cli.Run()
 
 	// 3. Verify the output

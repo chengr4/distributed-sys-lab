@@ -173,3 +173,24 @@ func (s *KVService) SetNextNode(args *SetNextNodeArgs, reply *SetNextNodeReply) 
 
 	return nil
 }
+
+// LocalAdapter allows calling KVService methods directly within the same process.
+type LocalAdapter struct {
+	service *KVService
+}
+
+func NewLocalAdapter(s *KVService) *LocalAdapter {
+	return &LocalAdapter{service: s}
+}
+
+func (l *LocalAdapter) CallRemote(serviceMethod string, args any, reply any) error {
+	if l == nil {
+		return fmt.Errorf("not connected: please execute 'dial' first")
+	}
+	switch serviceMethod {
+	case "KVService.SetNextNode":
+		return l.service.SetNextNode(args.(*SetNextNodeArgs), reply.(*SetNextNodeReply))
+	default:
+		return fmt.Errorf("this local controller only supports node management (SetNextNode), got: %s", serviceMethod)
+	}
+}
