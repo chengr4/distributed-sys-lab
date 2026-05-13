@@ -10,8 +10,11 @@ import (
 // StartServer initializes the storage and service, and starts listening for RPC connections.
 func StartServer(port string) error {
 	storage := NewStorage()
-	dialer := &RPCDialer{DefaultTimeout: 3 * time.Second}
-	service := NewKVService(storage, dialer)
+	server_dialer := &RPCDialer{
+		ConnectTimeout: 2 * time.Second,
+		RequestTimeout: 3 * time.Second,
+	}
+	service := NewKVService(storage, server_dialer)
 
 	// Create a private RPC server instance
 	server := rpc.NewServer()

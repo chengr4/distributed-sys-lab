@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// It encapsulates rpc.Client and provides the timeout control.
+// RPCAdapter encapsulates rpc.Client and provides the timeout control.
 type RPCAdapter struct {
 	remoteHandle *rpc.Client
 	timeout      time.Duration
@@ -44,14 +44,17 @@ func (r *RPCAdapter) CallRemote(serviceMethod string, args any, reply any) error
 }
 
 type RPCDialer struct {
-	DefaultTimeout time.Duration
+	ConnectTimeout time.Duration
+	RequestTimeout time.Duration
 }
 
 func (d *RPCDialer) Dial(addr string) (RemoteRequester, error) {
+	// Note: ConnectTimeout implementation is deferred as per user request.
+	// We currently use the default rpc.Dial.
 	remoteHandle, err := rpc.Dial("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial RPC server at %s: %v", addr, err)
 	}
 
-	return NewRPCAdapter(remoteHandle, d.DefaultTimeout), nil
+	return NewRPCAdapter(remoteHandle, d.RequestTimeout), nil
 }
