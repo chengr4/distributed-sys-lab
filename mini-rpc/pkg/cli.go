@@ -122,7 +122,8 @@ func (c *CLI) Run() bool {
 				continue
 			}
 			var reply StoreReply
-			err := c.remoteRequester.CallRemote("KVService.Store", &StoreArgs{Name: args[1], Value: args[2]}, &reply)
+			value := strings.Join(args[2:], " ")
+			err := c.remoteRequester.CallRemote("KVService.Store", &StoreArgs{Name: args[1], Value: value}, &reply)
 			if err != nil {
 				fmt.Fprintf(c.out, "Call failed: %v\n", err)
 			} else {

@@ -105,7 +105,7 @@ func TestKVServiceGetTime(t *testing.T) {
 func (m *MockDialer) Dial(addr string) (RemoteRequester, error) {
 	m.CalledWithAddr = addr
 
-	return &MockTimeoutRequester{}, nil
+	return &MockRemoteRequester{}, nil
 }
 
 func TestService_SetNextNode_NoNetwork(t *testing.T) {

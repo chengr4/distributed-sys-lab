@@ -75,16 +75,53 @@ func TestCLINoConnectionWarning(t *testing.T) {
 	}
 }
 
-type MockTimeoutRequester struct{}
+type MockRemoteRequester struct {
+	DoCall func(serviceMethod string, args interface{}, reply interface{}) error
+}
 
-func (m *MockTimeoutRequester) CallRemote(serviceMethod string, args interface{}, reply interface{}) error {
-	return errors.New("RPC call timed out")
+func (m *MockRemoteRequester) CallRemote(serviceMethod string, args interface{}, reply interface{}) error {
+	if m.DoCall != nil {
+		return m.DoCall(serviceMethod, args, reply)
+	}
+	return nil
+}
+
+func TestCLIStoreSentence(t *testing.T) {
+	input := "store mykey this is a long sentence\nexit\n"
+	in := strings.NewReader(input)
+	out := &bytes.Buffer{}
+	var capturedValue string
+
+	mock := &MockRemoteRequester{
+		DoCall: func(method string, args interface{}, reply interface{}) error {
+			if method == "KVService.Store" {
+				storeArgs := args.(*StoreArgs)
+				capturedValue = storeArgs.Value
+				r := reply.(*StoreReply)
+				r.Message = "Success"
+			}
+			return nil
+		},
+	}
+
+	cli := NewCLI(in, out)
+	cli.remoteRequester = mock
+	cli.Run()
+
+	expected := "this is a long sentence"
+	if capturedValue != expected {
+		t.Errorf("Expected captured value to be %q, got %q", expected, capturedValue)
+	}
 }
 
 func TestCLIRemoteTimeout(t *testing.T) {
 	in := strings.NewReader("add 1 2\nexit\n")
 	out := &bytes.Buffer{}
-	mock := &MockTimeoutRequester{}
+	mock := &MockRemoteRequester{
+		DoCall: func(method string, args interface{}, reply interface{}) error {
+			return errors.New("RPC call timed out")
+		},
+	}
 
 	cli := NewCLI(in, out)
 	cli.remoteRequester = mock
