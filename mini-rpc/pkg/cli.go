@@ -6,7 +6,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // CLI struct encapsulates input, output, and remote connection state
@@ -23,7 +22,7 @@ func NewCLI(in io.Reader, out io.Writer, d Dialer) *CLI {
 		in:              in,
 		out:             out,
 		dialer:          d,
-		remoteRequester: NewRPCAdapter(nil, 5*time.Second),
+		remoteRequester: NotConnectedRequester{},
 	}
 }
 

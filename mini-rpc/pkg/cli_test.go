@@ -91,8 +91,8 @@ func TestCLINoConnectionMessage(t *testing.T) {
 		cli.Run()
 
 		output := out.String()
-		// Now it should show the RPC adapter's error instead of a manual check
-		if !strings.Contains(output, "RPC client is not initialized") {
+		// Now it should show a domain-specific error instead of an implementation-leaked one
+		if !strings.Contains(output, "not connected: please execute 'dial' first") {
 			t.Errorf("Command %q should show connection error, got: %q", cmd, output)
 		}
 	}
