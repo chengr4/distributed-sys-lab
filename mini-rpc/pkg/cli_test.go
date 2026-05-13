@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+// MockRemoteRequester is a unified mock for RemoteRequester using function injection.
+type MockRemoteRequester struct {
+	DoCall func(serviceMethod string, args interface{}, reply interface{}) error
+}
+
+func (m *MockRemoteRequester) CallRemote(serviceMethod string, args interface{}, reply interface{}) error {
+	if m.DoCall != nil {
+		return m.DoCall(serviceMethod, args, reply)
+	}
+	return nil
+}
+
 func TestCLIBasicFlow(t *testing.T) {
 	input := "hello\nexit\n"
 	in := strings.NewReader(input)
@@ -73,17 +85,6 @@ func TestCLINoConnectionWarning(t *testing.T) {
 			t.Errorf("Command %q should show connection warning, got: %q", cmd, output)
 		}
 	}
-}
-
-type MockRemoteRequester struct {
-	DoCall func(serviceMethod string, args interface{}, reply interface{}) error
-}
-
-func (m *MockRemoteRequester) CallRemote(serviceMethod string, args interface{}, reply interface{}) error {
-	if m.DoCall != nil {
-		return m.DoCall(serviceMethod, args, reply)
-	}
-	return nil
 }
 
 func TestCLIStoreSentence(t *testing.T) {
