@@ -23,7 +23,7 @@ func TestConcurrentCalls(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numRequests)
 
-	for i := 0; i < numRequests; i++ {
+	for i := range numRequests {
 		go func(val int) {
 			defer wg.Done()
 			args := &minirpc.AddArgs{Num1: val, Num2: 1}
