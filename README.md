@@ -10,7 +10,7 @@ make test-coverage
 
 ## Mini RPC
 
-Each Node has following functions:
+Node A successfully calls 4 functions (store, read, add, getTime) and receives responses from Node B.
 
 1. `store(name, value)`
 2. `read(name)`
