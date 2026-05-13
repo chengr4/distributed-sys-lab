@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"time"
 	"mini-rpc/pkg"
 )
 
@@ -22,7 +23,8 @@ func main() {
 	}()
 
 	// Start CLI in the foreground using the library
-	cli := minirpc.NewCLI(os.Stdin, os.Stdout)
+	dialer := &minirpc.RPCDialer{DefaultTimeout: 5 * time.Second}
+	cli := minirpc.NewCLI(os.Stdin, os.Stdout, dialer)
 	shouldExit := cli.Run()
 
 	if shouldExit {

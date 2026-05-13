@@ -28,7 +28,7 @@ func TestDualRoleSelfCall(t *testing.T) {
 	in := strings.NewReader(input)
 	out := &bytes.Buffer{}
 
-	cli := minirpc.NewCLI(in, out)
+	cli := minirpc.NewCLI(in, out, &minirpc.RPCDialer{DefaultTimeout: 1 * time.Second})
 	cli.Run()
 
 	// 3. Verify the output

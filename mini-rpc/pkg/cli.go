@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net/rpc"
 	"strconv"
 	"strings"
 	"time"
@@ -14,14 +13,17 @@ import (
 type CLI struct {
 	in              io.Reader
 	out             io.Writer
+	dialer          Dialer
 	remoteRequester RemoteRequester
 }
 
 // NewCLI creates a new CLI instance with dependency injection support
-func NewCLI(in io.Reader, out io.Writer) *CLI {
+func NewCLI(in io.Reader, out io.Writer, d Dialer) *CLI {
 	return &CLI{
-		in:  in,
-		out: out,
+		in:              in,
+		out:             out,
+		dialer:          d,
+		remoteRequester: NewRPCAdapter(nil, 5*time.Second),
 	}
 }
 
@@ -54,20 +56,17 @@ func (c *CLI) Run() bool {
 				fmt.Fprintln(c.out, "Usage: dial <address:port>")
 				continue
 			}
-			handle, err := rpc.Dial("tcp", args[1])
+			remoteHandle, err := c.dialer.Dial(args[1])
 			if err != nil {
 				fmt.Fprintf(c.out, "Dial failed: %v\n", err)
 				continue
 			}
-			c.remoteRequester = NewRPCAdapter(handle, 5*time.Second)
+			c.remoteRequester = remoteHandle
 			fmt.Fprintf(c.out, "Successfully connected to %s\n", args[1])
 
 		case "setNextNode":
 			if len(args) < 2 {
 				fmt.Fprintln(c.out, "Usage: setNextNode <address:port>")
-				continue
-			}
-			if !c.checkConnection() {
 				continue
 			}
 			var reply SetNextNodeReply
@@ -79,9 +78,6 @@ func (c *CLI) Run() bool {
 			}
 
 		case "getTime":
-			if !c.checkConnection() {
-				continue
-			}
 			var reply GetTimeReply
 			err := c.remoteRequester.CallRemote("KVService.GetTime", &GetTimeArgs{}, &reply)
 			if err != nil {
@@ -101,9 +97,6 @@ func (c *CLI) Run() bool {
 				fmt.Fprintln(c.out, "Error: Both arguments must be integers")
 				continue
 			}
-			if !c.checkConnection() {
-				continue
-			}
 
 			var reply AddReply
 			err := c.remoteRequester.CallRemote("KVService.Add", &AddArgs{Num1: n1, Num2: n2}, &reply)
@@ -118,9 +111,6 @@ func (c *CLI) Run() bool {
 				fmt.Fprintln(c.out, "Usage: store <key> <value>")
 				continue
 			}
-			if !c.checkConnection() {
-				continue
-			}
 			var reply StoreReply
 			value := strings.Join(args[2:], " ")
 			err := c.remoteRequester.CallRemote("KVService.Store", &StoreArgs{Name: args[1], Value: value}, &reply)
@@ -133,9 +123,6 @@ func (c *CLI) Run() bool {
 		case "read":
 			if len(args) < 2 {
 				fmt.Fprintln(c.out, "Usage: read <key>")
-				continue
-			}
-			if !c.checkConnection() {
 				continue
 			}
 			var reply ReadReply
@@ -153,12 +140,4 @@ func (c *CLI) Run() bool {
 		}
 	}
 	return false
-}
-
-func (c *CLI) checkConnection() bool {
-	if c.remoteRequester == nil {
-		fmt.Fprintln(c.out, "Please execute 'dial' to connect to a node first")
-		return false
-	}
-	return true
 }
