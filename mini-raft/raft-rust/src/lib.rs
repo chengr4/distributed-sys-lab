@@ -98,25 +98,14 @@ impl RaftNode {
     pub fn handle_append_entries(&mut self, args: AppendEntriesArgs) -> AppendEntriesReply {
         // reject lagacy leader (Paper 5.1)
         if args.term < self.current_term {
-            return AppendEntriesReply {
-                term: self.current_term,
-                success: false,
-            };
+            return self.reject_append_entries();
         }
 
         // (Paper 5.2)
-        // Here maybe can be extracted to a separate function
-        if self.state != NodeState::Follower {
-            self.current_term = args.term;
-            self.state = NodeState::Follower;
-            self.voted_for = None;
-        }
+        self.apply_leader_term_and_step_down(args.term);
 
         if !self.has_matching_prev_entry(args.prev_log_index, args.prev_log_term) {
-            return AppendEntriesReply {
-                term: self.current_term,
-                success: false,
-            };
+            return self.reject_append_entries();
         }
 
         // Add new entries and handle conflicts (Paper 5.3 Step 3 & 4)
@@ -154,6 +143,26 @@ impl RaftNode {
         self.log
             .get(index as usize)
             .is_some_and(|entry| entry.term == term)
+    }
+
+    fn apply_leader_term_and_step_down(&mut self, leader_term: u64) {
+        if leader_term > self.current_term {
+            self.current_term = leader_term;
+            self.voted_for = None;
+            self.state = NodeState::Follower;
+            return;
+        }
+
+        if self.state != NodeState::Follower {
+            self.state = NodeState::Follower;
+        }
+    }
+
+    fn reject_append_entries(&self) -> AppendEntriesReply {
+        AppendEntriesReply {
+            term: self.current_term,
+            success: false,
+        }
     }
 }
 
@@ -244,6 +253,28 @@ mod tests {
 
         let reply = follower.handle_append_entries(args);
         assert_eq!(reply.success, false);
+    }
+
+    #[test]
+    fn test_follower_updates_term_when_receiving_higher_term_append_entries() {
+        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        follower.current_term = 1;
+        follower.voted_for = Some("node-1".to_string());
+
+        let args = AppendEntriesArgs {
+            term: 2,
+            leader_id: "node-2".to_string(),
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0,
+        };
+
+        let reply = follower.handle_append_entries(args);
+
+        assert_eq!(reply.success, true);
+        assert_eq!(follower.current_term, 2);
+        assert_eq!(follower.voted_for, None);
     }
 
     #[test]
