@@ -24,3 +24,6 @@ https://github.com/user-attachments/assets/8b3a7b42-be60-4afe-91ab-2eca38b1ce45
 This demo proves multi-hop forwarding: **Node A -> Node B -> Node C**, with the result returning to Node A:
 
 https://github.com/user-attachments/assets/cb4422ad-0c04-446b-9ddc-a8ac0b028015
+
+## Mini Raft
+

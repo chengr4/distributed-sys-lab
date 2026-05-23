@@ -1,3 +1,6 @@
 go 1.26.2
 
-use ./mini-rpc
+use (
+	./mini-rpc
+	./mini-raft
+)
