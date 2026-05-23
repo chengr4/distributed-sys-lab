@@ -1,0 +1,59 @@
+package relay
+
+import (
+	"mini-raft/pkg/raft"
+	"sync"
+)
+
+// Filter defines the interface for intercepting and potentially dropping messages.
+type Filter interface {
+	// ShouldForward returns true if the message should be allowed to pass.
+	ShouldForward(msg *raft.Message) bool
+}
+
+// Relay acts as a central hub for message routing and failure injection.
+type Relay struct {
+	// rwmu protects routingTable and filters for concurrent access.
+	rwmu         sync.RWMutex
+	routingTable map[string]string // NodeID -> Network Address
+	filters      []Filter
+}
+
+// AddFilter registers a new filter to the relay.
+func (r *Relay) AddFilter(filter Filter) {
+	r.rwmu.Lock()
+	defer r.rwmu.Unlock()
+	r.filters = append(r.filters, filter)
+}
+
+// ResolveTarget determines the destination address for a message after checking filters.
+func (r *Relay) ResolveTarget(msg *raft.Message) (string, bool) {
+	r.rwmu.RLock()
+	defer r.rwmu.RUnlock()
+
+	// 1. Check if any filter drops the message
+	for _, filter := range r.filters {
+		if !filter.ShouldForward(msg) {
+			return "", false
+		}
+	}
+
+	// 2. Resolve target from routing table
+	addr, ok := r.routingTable[msg.To]
+	return addr, ok
+}
+
+// RegisterNode adds or updates a node's address in the routing table.
+func (r *Relay) RegisterNode(id string, addr string) {
+	r.rwmu.Lock()
+	defer r.rwmu.Unlock()
+	r.routingTable[id] = addr
+}
+
+// NewRelay creates a new instance of Relay.
+func NewRelay() *Relay {
+	return &Relay{
+		routingTable: make(map[string]string),
+		filters:      make([]Filter, 0),
+	}
+}
