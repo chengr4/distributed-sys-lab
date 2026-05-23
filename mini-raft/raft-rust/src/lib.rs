@@ -112,16 +112,11 @@ impl RaftNode {
             self.voted_for = None;
         }
 
-        match self.log.get(args.prev_log_index as usize) {
-            Some(entry) if entry.term == args.prev_log_term => {
-                // Consistency check passed
-            }
-            _ => {
-                return AppendEntriesReply {
-                    term: self.current_term,
-                    success: false,
-                };
-            }
+        if !self.has_matching_prev_entry(args.prev_log_index, args.prev_log_term) {
+            return AppendEntriesReply {
+                term: self.current_term,
+                success: false,
+            };
         }
 
         // Add new entries and handle conflicts (Paper 5.3 Step 3 & 4)
@@ -141,9 +136,7 @@ impl RaftNode {
                     // Entry already exists and matches, do nothing
                 }
             }
-
         }
-
 
         // (Paper 5.3 Step 5)
         if args.leader_commit > self.committed_index {
@@ -155,6 +148,12 @@ impl RaftNode {
             term: self.current_term,
             success: true,
         }
+    }
+
+    fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
+        self.log
+            .get(index as usize)
+            .is_some_and(|entry| entry.term == term)
     }
 }
 
