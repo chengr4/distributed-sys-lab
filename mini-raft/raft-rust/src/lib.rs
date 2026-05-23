@@ -228,6 +228,63 @@ mod tests {
         assert_eq!(reply.success, false);
     }
 
+        #[test]
+    fn test_follower_appends_and_overwrites_logs() {
+        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        // Log state: [ (0,0,sentinel), (1,1,"cmd1"), (1,2,"old_cmd2") ]
+        follower.log.push(LogEntry {
+            term: 1,
+            index: 1,
+            command: "cmd1".to_string(),
+        });
+        follower.log.push(LogEntry {
+            term: 1,
+            index: 2,
+            command: "old_cmd2".to_string(),
+        });
+
+        // Leader sends: prev_log_index=1, prev_log_term=1
+        // Entries: [ (2,2,"new_cmd2"), (2,3,"new_cmd3") ]
+        // This should:
+        // 1. Match at index 1.
+        // 2. Discover conflict at index 2 (Term 1 != Term 2).
+        // 3. Remove index 2 and everything after.
+        // 4. Append the two new entries.
+        let args = AppendEntriesArgs {
+            term: 2,
+            leader_id: "node-2".to_string(),
+            prev_log_index: 1,
+            prev_log_term: 1,
+            entries: vec![
+                LogEntry {
+                    term: 2,
+                    index: 2,
+                    command: "new_cmd2".to_string(),
+                },
+                LogEntry {
+                    term: 2,
+                    index: 3,
+                    command: "new_cmd3".to_string(),
+                },
+            ],
+            leader_commit: 3,
+        };
+
+        let reply = follower.handle_append_entries(args);
+
+        assert_eq!(reply.success, true);
+        // Final log should be: [ sentinel, (1,1), (2,2), (2,3) ]
+        assert_eq!(follower.log.len(), 4);
+        assert_eq!(follower.log[2].term, 2);
+        assert_eq!(follower.log[2].command, "new_cmd2");
+        assert_eq!(follower.log[3].term, 2);
+        assert_eq!(follower.log[3].index, 3);
+
+        // committed_index should be min(leader_commit, last_new_entry_index)
+        // min(3, 3) = 3
+        assert_eq!(follower.committed_index, 3);
+    }
+
     // leader tests
     #[test]
     fn test_leader_steps_down_when_receiving_higher_term_append_entries() {
