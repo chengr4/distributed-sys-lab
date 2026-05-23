@@ -96,7 +96,7 @@ impl RaftNode {
     }
 
     pub fn handle_append_entries(&mut self, args: AppendEntriesArgs) -> AppendEntriesReply {
-        // reject lagacy leader (paper 5.1)
+        // reject lagacy leader (Paper 5.1)
         if args.term < self.current_term {
             return AppendEntriesReply {
                 term: self.current_term,
@@ -104,7 +104,7 @@ impl RaftNode {
             };
         }
 
-        // (paper 5.2)
+        // (Paper 5.2)
         // Here maybe can be extracted to a separate function
         if self.state != NodeState::Follower {
             self.current_term = args.term;
@@ -124,12 +124,31 @@ impl RaftNode {
             }
         }
 
-        // (paper 5.3)
+        // Add new entries and handle conflicts (Paper 5.3 Step 3 & 4)
+        let mut last_new_entry_index = args.prev_log_index;
+        for entry in args.entries {
+            last_new_entry_index = entry.index;
+            match self.log.get(entry.index as usize) {
+                Some(existing) if existing.term != entry.term => {
+                    // Conflict detected, delete the existing entry and all that follow it
+                    self.log.truncate(entry.index as usize);
+                    self.log.push(entry);
+                }
+                None => {
+                    self.log.push(entry);
+                }
+                _ => {
+                    // Entry already exists and matches, do nothing
+                }
+            }
+
+        }
+
+
+        // (Paper 5.3 Step 5)
         if args.leader_commit > self.committed_index {
             // committed_index = min(leader_commit, index of last new entry)
-
-            // TODO: consider log length in the future
-            self.committed_index = args.leader_commit;
+            self.committed_index = std::cmp::min(args.leader_commit, last_new_entry_index);
         }
 
         AppendEntriesReply {
@@ -228,7 +247,7 @@ mod tests {
         assert_eq!(reply.success, false);
     }
 
-        #[test]
+    #[test]
     fn test_follower_appends_and_overwrites_logs() {
         let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
         // Log state: [ (0,0,sentinel), (1,1,"cmd1"), (1,2,"old_cmd2") ]
