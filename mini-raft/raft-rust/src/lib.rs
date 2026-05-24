@@ -140,7 +140,39 @@ impl RaftNode {
     }
 
     pub fn handle_request_vote(&mut self, args: RequestVoteArgs) -> RequestVoteReply {
-        
+        if args.term < self.current_term {
+            return RequestVoteReply {
+                term: self.current_term,
+                vote_granted: false,
+            };
+        }
+
+        if args.term > self.current_term {
+            self.current_term = args.term;
+            self.voted_for = None;
+            self.state = NodeState::Follower;
+        }
+
+        let can_vote = match &self.voted_for {
+            None => true,
+            Some(id) if *id == args.candidate_id => true,
+            _ => false,
+        };
+
+        // TODO: Complement Election Safety in the future
+
+        if can_vote {
+            self.voted_for = Some(args.candidate_id);
+            RequestVoteReply {
+                term: self.current_term,
+                vote_granted: true,
+            }
+        } else {
+            RequestVoteReply {
+                term: self.current_term,
+                vote_granted: false,
+            }
+        }
     }
 
     fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
