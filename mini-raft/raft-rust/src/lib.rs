@@ -30,14 +30,14 @@ pub struct RequestVoteArgs {
     pub last_log_term: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct RequestVoteReply {
     pub term: u64,
     pub vote_granted: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct AppendEntriesArgs {
     pub term: u64,
@@ -139,6 +139,10 @@ impl RaftNode {
         }
     }
 
+    pub fn handle_request_vote(&mut self, args: RequestVoteArgs) -> RequestVoteReply {
+        
+    }
+
     fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
         self.log
             .get(index as usize)
@@ -170,9 +174,13 @@ impl RaftNode {
 mod tests {
     use super::*;
 
+    fn setup_node() -> RaftNode {
+        RaftNode::new("node-1".to_string(), vec!["node-2".to_string()])
+    }
+
     #[test]
     fn test_initial_state() {
-        let node = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let node = setup_node();
         assert_eq!(node.state, NodeState::Follower);
         assert_eq!(node.current_term, 0);
         assert_eq!(node.voted_for, None);
@@ -183,7 +191,7 @@ mod tests {
     // follower tests
     #[test]
     fn test_follower_updates_committed_index_on_append_entries_arg() {
-        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut follower = setup_node();
         follower.log.push(LogEntry {
             term: 1,
             index: 1,
@@ -211,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_follower_rejects_append_entries_when_prev_log_index_is_missing() {
-        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut follower = setup_node();
 
         follower.log.push(LogEntry {
             term: 1,
@@ -234,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_follower_rejects_append_entries_when_prev_log_term_mismatch() {
-        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut follower = setup_node();
 
         follower.log.push(LogEntry {
             term: 1,
@@ -257,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_follower_updates_term_when_receiving_higher_term_append_entries() {
-        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut follower = setup_node();
         follower.current_term = 1;
         follower.voted_for = Some("node-1".to_string());
 
@@ -279,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_follower_appends_and_overwrites_logs() {
-        let mut follower = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut follower = setup_node();
         // Log state: [ (0,0,sentinel), (1,1,"cmd1"), (1,2,"old_cmd2") ]
         follower.log.push(LogEntry {
             term: 1,
@@ -337,7 +345,7 @@ mod tests {
     // leader tests
     #[test]
     fn test_leader_steps_down_when_receiving_higher_term_append_entries() {
-        let mut leader = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut leader = setup_node();
 
         leader.state = NodeState::Leader {
             next_indices: HashMap::new(),
@@ -363,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_leader_does_not_update_committed_index_from_append_entries() {
-        let mut leader = RaftNode::new("node-1".to_string(), vec!["node-2".to_string()]);
+        let mut leader = setup_node();
 
         let mut next_indices = HashMap::new();
         let mut match_indices = HashMap::new();
@@ -392,5 +400,64 @@ mod tests {
 
         // The leader should not update its committed index based on the AppendEntries from another leader
         assert_eq!(leader.committed_index, 1);
+    }
+
+    // --- RequestVote Tests ---
+    #[test]
+    fn test_request_vote_rejects_old_term() {
+        let mut node = setup_node();
+        node.current_term = 2;
+
+        let args = RequestVoteArgs {
+            term: 1, // Older term
+            candidate_id: "candidate-A".to_string(),
+            last_log_index: 0,
+            last_log_term: 0,
+        };
+
+        let reply = node.handle_request_vote(args);
+        assert_eq!(reply.vote_granted, false);
+        assert_eq!(reply.term, 2);
+    }
+
+    #[test]
+    fn test_request_vote_grants_vote_and_updates_term() {
+        let mut node = setup_node();
+        node.current_term = 1;
+
+        let args = RequestVoteArgs {
+            term: 3, // Higher term
+            candidate_id: "candidate-A".to_string(),
+            last_log_index: 0,
+            last_log_term: 0,
+        };
+
+        let reply = node.handle_request_vote(args);
+
+        assert_eq!(reply.vote_granted, true);
+        assert_eq!(reply.term, 3);
+        assert_eq!(node.current_term, 3);
+        assert_eq!(node.voted_for, Some("candidate-A".to_string()));
+        assert_eq!(node.state, NodeState::Follower);
+    }
+
+    #[test]
+    fn test_request_vote_rejects_duplicate_vote_in_same_term() {
+        let mut node = setup_node();
+        node.current_term = 3;
+        node.voted_for = Some("candidate-A".to_string());
+
+        let args = RequestVoteArgs {
+            term: 3, // Same term
+            candidate_id: "candidate-B".to_string(),
+            last_log_index: 0,
+            last_log_term: 0,
+        };
+
+        let reply = node.handle_request_vote(args);
+
+        assert_eq!(reply.vote_granted, false);
+        assert_eq!(reply.term, 3);
+        assert_eq!(node.voted_for, Some("candidate-A".to_string())); // Still voted for candidate-A
     }
 }
