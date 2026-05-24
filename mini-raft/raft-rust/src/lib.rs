@@ -101,8 +101,12 @@ impl RaftNode {
             return self.reject_append_entries();
         }
 
-        // (Paper 5.2)
-        self.apply_leader_term_and_step_down(args.term);
+        // Paper 5.1
+        self.maybe_step_down(args.term);
+
+        // Paper 5.2
+        // Case: arg.term == self.current_term and I am candidate => step down to follower
+        self.state = NodeState::Follower;
 
         if !self.has_matching_prev_entry(args.prev_log_index, args.prev_log_term) {
             return self.reject_append_entries();
@@ -147,11 +151,7 @@ impl RaftNode {
             };
         }
 
-        if args.term > self.current_term {
-            self.current_term = args.term;
-            self.voted_for = None;
-            self.state = NodeState::Follower;
-        }
+        self.maybe_step_down(args.term);
 
         let can_vote = match &self.voted_for {
             None => true,
@@ -181,15 +181,10 @@ impl RaftNode {
             .is_some_and(|entry| entry.term == term)
     }
 
-    fn apply_leader_term_and_step_down(&mut self, leader_term: u64) {
-        if leader_term > self.current_term {
-            self.current_term = leader_term;
+    fn maybe_step_down(&mut self, term: u64) {
+        if term > self.current_term {
+            self.current_term = term;
             self.voted_for = None;
-            self.state = NodeState::Follower;
-            return;
-        }
-
-        if self.state != NodeState::Follower {
             self.state = NodeState::Follower;
         }
     }
