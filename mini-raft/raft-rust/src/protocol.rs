@@ -61,3 +61,13 @@ pub struct Message {
     pub r#type: String, // 'type' is a reserved keyword in Rust, use r# prefix
     pub payload: Vec<u8>,
 }
+
+// The dicision of RaftNode (brain); Relay and engine (body) will execute the side effects
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SideEffect {
+    // to the engine
+    ResetElectionTimer,
+    BroadcastRequestVote(RequestVoteArgs),
+    BroadcastAppendEntries(AppendEntriesArgs),
+    ApplyEntry { index: u64, command: String }
+}

@@ -33,10 +33,15 @@ impl RaftNode {
         }
     }
 
-    pub fn handle_append_entries(&mut self, args: AppendEntriesArgs) -> AppendEntriesReply {
+    pub fn handle_append_entries(
+        &mut self,
+        args: AppendEntriesArgs,
+    ) -> (AppendEntriesReply, Vec<SideEffect>) {
+        let mut side_effects = Vec::new();
+
         // reject lagacy leader (Paper 5.1)
         if args.term < self.current_term {
-            return self.reject_append_entries();
+            return (self.reject_append_entries(), side_effects);
         }
 
         // Paper 5.1
@@ -45,9 +50,10 @@ impl RaftNode {
         // Paper 5.2
         // Case: arg.term == self.current_term and I am candidate => step down to follower
         self.state = NodeState::Follower;
+        side_effects.push(SideEffect::ResetElectionTimer);
 
         if !self.has_matching_prev_entry(args.prev_log_index, args.prev_log_term) {
-            return self.reject_append_entries();
+            return (self.reject_append_entries(), side_effects);
         }
 
         // Add new entries and handle conflicts (Paper 5.3 Step 3 & 4)
@@ -75,10 +81,12 @@ impl RaftNode {
             self.committed_index = std::cmp::min(args.leader_commit, last_new_entry_index);
         }
 
-        AppendEntriesReply {
+        let reply = AppendEntriesReply {
             term: self.current_term,
             success: true,
-        }
+        };
+
+        (reply, side_effects)
     }
 
     pub fn handle_request_vote(&mut self, args: RequestVoteArgs) -> RequestVoteReply {
@@ -172,7 +180,7 @@ mod tests {
             command: "cmd1".to_string(),
         });
 
-        let args = AppendEntriesArgs {
+        let leader_args = AppendEntriesArgs {
             term: 1,
             leader_id: "node-2".to_string(),
             prev_log_index: 2,
@@ -181,7 +189,7 @@ mod tests {
             leader_commit: 2,
         };
 
-        follower.handle_append_entries(args);
+        follower.handle_append_entries(leader_args);
 
         assert_eq!(follower.committed_index, 2);
     }
@@ -196,7 +204,7 @@ mod tests {
             command: "cmd1".to_string(),
         });
 
-        let args = AppendEntriesArgs {
+        let leader_args = AppendEntriesArgs {
             term: 1,
             leader_id: "node-2".to_string(),
             prev_log_index: 2,
@@ -205,7 +213,7 @@ mod tests {
             leader_commit: 0,
         };
 
-        let reply = follower.handle_append_entries(args);
+        let (reply, _) = follower.handle_append_entries(leader_args);
         assert_eq!(reply.success, false);
     }
 
@@ -219,7 +227,7 @@ mod tests {
             command: "cmd1".to_string(),
         });
 
-        let args = AppendEntriesArgs {
+        let leader_args = AppendEntriesArgs {
             term: 1,
             leader_id: "node-2".to_string(),
             prev_log_index: 1,
@@ -228,7 +236,7 @@ mod tests {
             leader_commit: 0,
         };
 
-        let reply = follower.handle_append_entries(args);
+        let (reply, _) = follower.handle_append_entries(leader_args);
         assert_eq!(reply.success, false);
     }
 
@@ -238,7 +246,7 @@ mod tests {
         follower.current_term = 1;
         follower.voted_for = Some("node-1".to_string());
 
-        let args = AppendEntriesArgs {
+        let leader_args = AppendEntriesArgs {
             term: 2,
             leader_id: "node-2".to_string(),
             prev_log_index: 0,
@@ -247,7 +255,7 @@ mod tests {
             leader_commit: 0,
         };
 
-        let reply = follower.handle_append_entries(args);
+        let (reply, _) = follower.handle_append_entries(leader_args);
 
         assert_eq!(reply.success, true);
         assert_eq!(follower.current_term, 2);
@@ -268,7 +276,7 @@ mod tests {
             command: "old_cmd2".to_string(),
         });
 
-        let args = AppendEntriesArgs {
+        let leader_args = AppendEntriesArgs {
             term: 2,
             leader_id: "node-2".to_string(),
             prev_log_index: 1,
@@ -288,7 +296,7 @@ mod tests {
             leader_commit: 3,
         };
 
-        let reply = follower.handle_append_entries(args);
+        let (reply, _) = follower.handle_append_entries(leader_args);
 
         assert_eq!(reply.success, true);
         assert_eq!(follower.log.len(), 4);
@@ -297,6 +305,25 @@ mod tests {
         assert_eq!(follower.log[3].term, 2);
         assert_eq!(follower.log[3].index, 3);
         assert_eq!(follower.committed_index, 3);
+    }
+
+    #[test]
+    fn test_follower_resets_timer_on_valid_append_entries() {
+        let mut follower = setup_node();
+        follower.current_term = 1;
+
+        let leader_args = AppendEntriesArgs {
+            term: 1,
+            leader_id: "node-2".to_string(),
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0,
+        };
+
+        let (_reply, side_effects) = follower.handle_append_entries(leader_args);
+
+        assert!(side_effects.contains(&SideEffect::ResetElectionTimer));
     }
 
     #[test]
