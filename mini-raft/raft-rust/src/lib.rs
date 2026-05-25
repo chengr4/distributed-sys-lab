@@ -153,15 +153,18 @@ impl RaftNode {
 
         self.maybe_step_down(args.term);
 
-        let can_vote = match &self.voted_for {
+        let voter_last_log = self.log.last().unwrap();
+        let is_voter_log_up_to_date = args.last_log_term > voter_last_log.term
+            || (args.last_log_term == voter_last_log.term
+                && args.last_log_index >= voter_last_log.index);
+
+        let voter_can_vote_for_candidate = match &self.voted_for {
             None => true,
             Some(id) if *id == args.candidate_id => true,
             _ => false,
         };
 
-        // TODO: Complement Election Safety in the future
-
-        if can_vote {
+        if voter_can_vote_for_candidate && is_voter_log_up_to_date {
             self.voted_for = Some(args.candidate_id);
             RequestVoteReply {
                 term: self.current_term,
@@ -524,7 +527,6 @@ mod tests {
             index: 2,
             command: "cmd1".to_string(),
         });
-
 
         let candidate_args = RequestVoteArgs {
             term: 3,
