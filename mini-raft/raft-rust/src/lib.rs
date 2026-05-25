@@ -487,4 +487,54 @@ mod tests {
         assert_eq!(reply.term, 3);
         assert_eq!(node.voted_for, Some("candidate-A".to_string())); // Still voted for candidate-A
     }
+
+    #[test]
+    fn test_request_vote_rejects_if_candidate_log_term_is_older() {
+        let mut voter = setup_node();
+        voter.current_term = 2;
+        voter.log.push(LogEntry {
+            term: 2,
+            index: 1,
+            command: "cmd1".to_string(),
+        });
+
+        let candidate_args = RequestVoteArgs {
+            term: 3,
+            candidate_id: "candidate-A".to_string(),
+            last_log_index: 10,
+            last_log_term: 1, // Older term than voter's last log entry
+        };
+
+        let voter_reply = voter.handle_request_vote(candidate_args);
+        assert_eq!(voter_reply.vote_granted, false);
+        assert_eq!(voter.voted_for, None); // Should not vote for candidate-A
+    }
+
+    #[test]
+    fn test_request_vote_rejects_if_candidate_log_term_same_but_index_shorter() {
+        let mut voter = setup_node();
+        voter.current_term = 2;
+        voter.log.push(LogEntry {
+            term: 2,
+            index: 1,
+            command: "cmd1".to_string(),
+        });
+        voter.log.push(LogEntry {
+            term: 2,
+            index: 2,
+            command: "cmd1".to_string(),
+        });
+
+
+        let candidate_args = RequestVoteArgs {
+            term: 3,
+            candidate_id: "candidate-A".to_string(),
+            last_log_index: 1, // Shorter log than voter's last log entry
+            last_log_term: 2,  // Same term as voter's last log entry
+        };
+
+        let voter_reply = voter.handle_request_vote(candidate_args);
+        assert_eq!(voter_reply.vote_granted, false);
+        assert_eq!(voter.voted_for, None); // Should not vote for candidate-A
+    }
 }
