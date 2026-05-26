@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::protocol::*;
 
 pub struct RaftNode {
@@ -151,21 +153,24 @@ impl RaftNode {
             return side_effects;
         }
 
-        self.state = NodeState::Candidate;
+        let mut votes_received = HashSet::new();
+        votes_received.insert(self.id.clone()); // vote for self
+
+        self.state = NodeState::Candidate { votes_received };
         self.current_term += 1;
         self.voted_for = Some(self.id.clone());
 
         side_effects.push(SideEffect::ResetElectionTimer);
 
-        let last_log = self
+        let candidate_last_log = self
             .log
             .last()
             .expect("Log should at least have a sentinel entry");
         let request_vote_args = RequestVoteArgs {
             term: self.current_term,
             candidate_id: self.id.clone(),
-            last_log_index: last_log.index,
-            last_log_term: last_log.term,
+            last_log_index: candidate_last_log.index,
+            last_log_term: candidate_last_log.term,
         };
 
         side_effects.push(SideEffect::BroadcastRequestVote(request_vote_args));
@@ -561,7 +566,7 @@ mod tests {
 
         let new_candidate = follower;
 
-        assert_eq!(new_candidate.state, NodeState::Candidate);
+        assert!(matches!(new_candidate.state, NodeState::Candidate{ .. }));
         assert_eq!(new_candidate.current_term, 2);
         assert_eq!(new_candidate.voted_for, Some("node-1".to_string())); // vote for self
         assert!(side_effects.contains(&SideEffect::ResetElectionTimer));

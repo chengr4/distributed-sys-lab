@@ -1,10 +1,12 @@
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeState {
     Follower,
-    Candidate,
+    Candidate {
+        votes_received: HashSet<String>,
+    },
     Leader {
         // Index of next log entry to send to each peer
         next_indices: HashMap<String, u64>,
@@ -69,5 +71,5 @@ pub enum SideEffect {
     ResetElectionTimer,
     BroadcastRequestVote(RequestVoteArgs),
     BroadcastAppendEntries(AppendEntriesArgs),
-    ApplyEntry { index: u64, command: String }
+    ApplyEntry { index: u64, command: String },
 }
