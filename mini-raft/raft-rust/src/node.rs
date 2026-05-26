@@ -143,6 +143,36 @@ impl RaftNode {
         }
     }
 
+    pub fn handle_timeout(&mut self) -> Vec<SideEffect> {
+        let mut side_effects = Vec::new();
+
+        // Safty check: This should never happen for a leader
+        if let NodeState::Leader { .. } = self.state {
+            return side_effects;
+        }
+
+        self.state = NodeState::Candidate;
+        self.current_term += 1;
+        self.voted_for = Some(self.id.clone());
+
+        side_effects.push(SideEffect::ResetElectionTimer);
+
+        let last_log = self
+            .log
+            .last()
+            .expect("Log should at least have a sentinel entry");
+        let request_vote_args = RequestVoteArgs {
+            term: self.current_term,
+            candidate_id: self.id.clone(),
+            last_log_index: last_log.index,
+            last_log_term: last_log.term,
+        };
+
+        side_effects.push(SideEffect::BroadcastRequestVote(request_vote_args));
+
+        side_effects
+    }
+
     fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
         self.log
             .get(index as usize)
@@ -171,7 +201,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn setup_node() -> RaftNode {
-        RaftNode::new("node-1".to_string(), vec!["node-2".to_string()])
+        RaftNode::new(
+            "node-1".to_string(),
+            vec!["node-2".to_string(), "node-3".to_string()],
+        )
     }
 
     #[test]
@@ -512,5 +545,29 @@ mod tests {
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
         assert!(side_effects.is_empty());
+    }
+
+    #[test]
+    fn test_timeout_triggers_election() {
+        let mut follower = setup_node();
+        follower.current_term = 1;
+        follower.log.push(LogEntry {
+            term: 1,
+            index: 1,
+            command: "cmd1".to_string(),
+        });
+
+        let side_effects = follower.handle_timeout();
+
+        let new_candidate = follower;
+
+        assert_eq!(new_candidate.state, NodeState::Candidate);
+        assert_eq!(new_candidate.current_term, 2);
+        assert_eq!(new_candidate.voted_for, Some("node-1".to_string())); // vote for self
+        assert!(side_effects.contains(&SideEffect::ResetElectionTimer));
+        let found_broadcast = side_effects
+            .iter()
+            .any(|se| matches!(se, SideEffect::BroadcastRequestVote(_)));
+        assert!(found_broadcast);
     }
 }
