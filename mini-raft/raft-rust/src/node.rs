@@ -89,29 +89,29 @@ impl RaftNode {
         (reply, side_effects)
     }
 
-    pub fn handle_request_vote(&mut self, args: RequestVoteArgs) -> RequestVoteReply {
-        if args.term < self.current_term {
+    pub fn handle_request_vote(&mut self, candidate_args: RequestVoteArgs) -> RequestVoteReply {
+        if candidate_args.term < self.current_term {
             return RequestVoteReply {
                 term: self.current_term,
                 vote_granted: false,
             };
         }
 
-        self.maybe_step_down(args.term);
+        self.maybe_step_down(candidate_args.term);
 
         let voter_last_log = self.log.last().unwrap();
-        let is_voter_log_up_to_date = args.last_log_term > voter_last_log.term
-            || (args.last_log_term == voter_last_log.term
-                && args.last_log_index >= voter_last_log.index);
+        let is_voter_log_up_to_date = candidate_args.last_log_term > voter_last_log.term
+            || (candidate_args.last_log_term == voter_last_log.term
+                && candidate_args.last_log_index >= voter_last_log.index);
 
         let voter_can_vote_for_candidate = match &self.voted_for {
             None => true,
-            Some(id) if *id == args.candidate_id => true,
+            Some(id) if *id == candidate_args.candidate_id => true,
             _ => false,
         };
 
         if voter_can_vote_for_candidate && is_voter_log_up_to_date {
-            self.voted_for = Some(args.candidate_id);
+            self.voted_for = Some(candidate_args.candidate_id);
             RequestVoteReply {
                 term: self.current_term,
                 vote_granted: true,
