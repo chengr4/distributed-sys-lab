@@ -178,6 +178,11 @@ impl RaftNode {
         side_effects
     }
 
+    // Behavior: Candidate
+    pub fn handle_request_vote_reply(&mut self, from: String, reply: RequestVoteReply) -> Vec<SideEffect> {
+
+    }
+
     fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
         self.log
             .get(index as usize)
@@ -574,5 +579,45 @@ mod tests {
             .iter()
             .any(|se| matches!(se, SideEffect::BroadcastRequestVote(_)));
         assert!(found_broadcast);
+    }
+
+    #[test]
+    fn test_candidate_becomes_leader_on_majority_votes() {
+        // setup_node provides 3 nodes (node-1, node-2, node-3). Majority = 2.
+        let mut node = setup_node();
+
+        // 1. Trigger election
+        node.handle_timeout();
+        // Current state: Candidate, Term 1, Votes: {node-1}
+
+        // 2. Receive vote from node-2
+        let node2_reply = RequestVoteReply {
+            term: 1,
+            vote_granted: true,
+        };
+        let side_effects = node.handle_request_vote_reply("node-2".to_string(), node2_reply);
+
+        // 3. Verify transition
+        assert!(matches!(node.state, NodeState::Leader { .. }));
+        assert_eq!(node.current_term, 1);
+
+        // 4. Verify Leader state initialization
+        if let NodeState::Leader {
+            next_indices,
+            match_indices,
+        } = &node.state
+        {
+            assert_eq!(next_indices.get("node-2"), Some(&1)); // last_log_index (0) + 1
+            assert_eq!(next_indices.get("node-3"), Some(&1));
+            assert_eq!(match_indices.get("node-2"), Some(&0));
+        } else {
+            panic!("Should be leader");
+        }
+
+        // 5. Verify immediate heartbeat
+        let found_heartbeat = side_effects
+            .iter()
+            .any(|se| matches!(se, SideEffect::BroadcastAppendEntries(_)));
+        assert!(found_heartbeat);
     }
 }
