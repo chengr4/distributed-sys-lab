@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::protocol::*;
 
@@ -179,8 +179,55 @@ impl RaftNode {
     }
 
     // Behavior: Candidate
-    pub fn handle_request_vote_reply(&mut self, from: String, reply: RequestVoteReply) -> Vec<SideEffect> {
+    pub fn handle_request_vote_reply(
+        &mut self,
+        from: String,
+        reply: RequestVoteReply,
+    ) -> Vec<SideEffect> {
+        let mut side_effects = Vec::new();
 
+        if self.maybe_step_down(reply.term) {
+            return side_effects;
+        }
+
+        if let NodeState::Candidate { votes_received } = &mut self.state {
+            if reply.term == self.current_term && reply.vote_granted {
+                votes_received.insert(from);
+
+                // Majority = (N / 2) + 1
+                let total_nodes = self.peers.len() + 1;
+                if votes_received.len() > total_nodes / 2 {
+                    let last_log = self.log.last().unwrap();
+                    let last_log_index = last_log.index;
+                    let last_log_term = last_log.term;
+
+                    let mut next_indices = HashMap::new();
+                    let mut match_indices = HashMap::new();
+
+                    for peer in &self.peers {
+                        next_indices.insert(peer.clone(), last_log_index + 1);
+                        match_indices.insert(peer.clone(), 0);
+                    }
+
+                    self.state = NodeState::Leader {
+                        next_indices,
+                        match_indices,
+                    };
+
+                    // Send the first heartbeat immediately after becoming leader
+                    let heartbeat_args = AppendEntriesArgs {
+                        term: self.current_term,
+                        leader_id: self.id.clone(),
+                        prev_log_index: last_log_index,
+                        prev_log_term: last_log_term,
+                        entries: vec![],
+                        leader_commit: self.committed_index,
+                    };
+                    side_effects.push(SideEffect::BroadcastAppendEntries(heartbeat_args));
+                }
+            }
+        }
+        side_effects
     }
 
     fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
@@ -189,12 +236,14 @@ impl RaftNode {
             .is_some_and(|entry| entry.term == term)
     }
 
-    fn maybe_step_down(&mut self, term: u64) {
+    fn maybe_step_down(&mut self, term: u64) -> bool {
         if term > self.current_term {
             self.current_term = term;
             self.voted_for = None;
             self.state = NodeState::Follower;
+            return true;
         }
+        false
     }
 
     fn reject_append_entries(&self) -> AppendEntriesReply {
@@ -571,7 +620,7 @@ mod tests {
 
         let new_candidate = follower;
 
-        assert!(matches!(new_candidate.state, NodeState::Candidate{ .. }));
+        assert!(matches!(new_candidate.state, NodeState::Candidate { .. }));
         assert_eq!(new_candidate.current_term, 2);
         assert_eq!(new_candidate.voted_for, Some("node-1".to_string())); // vote for self
         assert!(side_effects.contains(&SideEffect::ResetElectionTimer));
