@@ -89,12 +89,20 @@ impl RaftNode {
         (reply, side_effects)
     }
 
-    pub fn handle_request_vote(&mut self, candidate_args: RequestVoteArgs) -> RequestVoteReply {
+    pub fn handle_request_vote(
+        &mut self,
+        candidate_args: RequestVoteArgs,
+    ) -> (RequestVoteReply, Vec<SideEffect>) {
+        let mut side_effects = Vec::new();
+
         if candidate_args.term < self.current_term {
-            return RequestVoteReply {
-                term: self.current_term,
-                vote_granted: false,
-            };
+            return (
+                RequestVoteReply {
+                    term: self.current_term,
+                    vote_granted: false,
+                },
+                side_effects,
+            );
         }
 
         self.maybe_step_down(candidate_args.term);
@@ -102,7 +110,8 @@ impl RaftNode {
         let voter_last_log = self.log.last().unwrap();
 
         // Paper 5.4.1
-        let is_candidate_at_least_as_up_to_date = candidate_args.last_log_term > voter_last_log.term
+        let is_candidate_at_least_as_up_to_date = candidate_args.last_log_term
+            > voter_last_log.term
             || (candidate_args.last_log_term == voter_last_log.term
                 && candidate_args.last_log_index >= voter_last_log.index);
 
@@ -114,15 +123,23 @@ impl RaftNode {
 
         if voter_can_vote_for_candidate && is_candidate_at_least_as_up_to_date {
             self.voted_for = Some(candidate_args.candidate_id);
-            RequestVoteReply {
-                term: self.current_term,
-                vote_granted: true,
-            }
+            side_effects.push(SideEffect::ResetElectionTimer);
+
+            (
+                RequestVoteReply {
+                    term: self.current_term,
+                    vote_granted: true,
+                },
+                side_effects,
+            )
         } else {
-            RequestVoteReply {
-                term: self.current_term,
-                vote_granted: false,
-            }
+            (
+                RequestVoteReply {
+                    term: self.current_term,
+                    vote_granted: false,
+                },
+                side_effects,
+            )
         }
     }
 
@@ -397,7 +414,7 @@ mod tests {
             last_log_term: 0,
         };
 
-        let reply = node.handle_request_vote(args);
+        let (reply, _) = node.handle_request_vote(args);
         assert_eq!(reply.vote_granted, false);
         assert_eq!(reply.term, 2);
     }
@@ -414,13 +431,14 @@ mod tests {
             last_log_term: 0,
         };
 
-        let reply = node.handle_request_vote(args);
+        let (reply, side_effects) = node.handle_request_vote(args);
 
         assert_eq!(reply.vote_granted, true);
         assert_eq!(reply.term, 3);
         assert_eq!(node.current_term, 3);
         assert_eq!(node.voted_for, Some("candidate-A".to_string()));
         assert_eq!(node.state, NodeState::Follower);
+        assert!(side_effects.contains(&SideEffect::ResetElectionTimer));
     }
 
     #[test]
@@ -436,7 +454,7 @@ mod tests {
             last_log_term: 0,
         };
 
-        let reply = node.handle_request_vote(args);
+        let (reply, _) = node.handle_request_vote(args);
 
         assert_eq!(reply.vote_granted, false);
         assert_eq!(reply.term, 3);
@@ -460,7 +478,7 @@ mod tests {
             last_log_term: 1,
         };
 
-        let voter_reply = voter.handle_request_vote(candidate_args);
+        let (voter_reply, _) = voter.handle_request_vote(candidate_args);
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
     }
@@ -487,7 +505,7 @@ mod tests {
             last_log_term: 2,
         };
 
-        let voter_reply = voter.handle_request_vote(candidate_args);
+        let (voter_reply, _) = voter.handle_request_vote(candidate_args);
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
     }
