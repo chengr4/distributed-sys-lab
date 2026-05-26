@@ -100,7 +100,9 @@ impl RaftNode {
         self.maybe_step_down(candidate_args.term);
 
         let voter_last_log = self.log.last().unwrap();
-        let is_voter_log_up_to_date = candidate_args.last_log_term > voter_last_log.term
+
+        // Paper 5.4.1
+        let is_candidate_at_least_as_up_to_date = candidate_args.last_log_term > voter_last_log.term
             || (candidate_args.last_log_term == voter_last_log.term
                 && candidate_args.last_log_index >= voter_last_log.index);
 
@@ -110,7 +112,7 @@ impl RaftNode {
             _ => false,
         };
 
-        if voter_can_vote_for_candidate && is_voter_log_up_to_date {
+        if voter_can_vote_for_candidate && is_candidate_at_least_as_up_to_date {
             self.voted_for = Some(candidate_args.candidate_id);
             RequestVoteReply {
                 term: self.current_term,
