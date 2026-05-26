@@ -414,9 +414,10 @@ mod tests {
             last_log_term: 0,
         };
 
-        let (reply, _) = node.handle_request_vote(args);
+        let (reply, side_effects) = node.handle_request_vote(args);
         assert_eq!(reply.vote_granted, false);
         assert_eq!(reply.term, 2);
+        assert!(side_effects.is_empty());
     }
 
     #[test]
@@ -454,11 +455,12 @@ mod tests {
             last_log_term: 0,
         };
 
-        let (reply, _) = node.handle_request_vote(args);
+        let (reply, side_effects) = node.handle_request_vote(args);
 
         assert_eq!(reply.vote_granted, false);
         assert_eq!(reply.term, 3);
         assert_eq!(node.voted_for, Some("candidate-A".to_string()));
+        assert!(side_effects.is_empty());
     }
 
     #[test]
@@ -478,9 +480,10 @@ mod tests {
             last_log_term: 1,
         };
 
-        let (voter_reply, _) = voter.handle_request_vote(candidate_args);
+        let (voter_reply, side_effects) = voter.handle_request_vote(candidate_args);
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
+        assert!(side_effects.is_empty());
     }
 
     #[test]
@@ -505,8 +508,9 @@ mod tests {
             last_log_term: 2,
         };
 
-        let (voter_reply, _) = voter.handle_request_vote(candidate_args);
+        let (voter_reply, side_effects) = voter.handle_request_vote(candidate_args);
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
+        assert!(side_effects.is_empty());
     }
 }
