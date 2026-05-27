@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"math/rand/v2"
 	"mini-raft/pkg/raft"
 	"sync"
 )
@@ -9,6 +10,25 @@ import (
 type Filter interface {
 	// ShouldForward returns true if the message should be allowed to pass.
 	ShouldForward(msg *raft.Message) bool
+}
+
+// DropRule simulates random packet loss based on a probability.
+type DropRule struct {
+	// Probability of dropping a message (0.0 to 1.0).
+	Probability float64
+	// Seed for random number generation to make it deterministic if needed.
+	rng *rand.Rand
+}
+
+func NewDropRule(probability float64) *DropRule {
+	return &DropRule{
+		Probability: probability,
+		rng:         rand.New(rand.NewPCG(1, 1)),
+	}
+}
+
+func (d *DropRule) ShouldForward(msg *raft.Message) bool {
+	return d.rng.Float64() >= d.Probability
 }
 
 // Relay acts as a central hub for message routing and failure injection.

@@ -49,3 +49,42 @@ func Test_ResolveTarget(t *testing.T) {
 		}
 	})
 }
+
+func Test_DropRule(t *testing.T) {
+	msg := &raft.Message{}
+
+	t.Run("Drop all messages when probability is 1.0", func(t *testing.T) {
+		rule := NewDropRule(1.0)
+		for range 100 {
+			if rule.ShouldForward(msg) {
+				t.Errorf("Expected message to be dropped at 1.0 probability")
+			}
+		}
+	})
+
+	t.Run("Forward all messages when probability is 0.0", func(t *testing.T) {
+		rule := NewDropRule(0.0)
+		for range 100 {
+			if !rule.ShouldForward(msg) {
+				t.Errorf("Expected message to be forwarded at 0.0 probability")
+			}
+		}
+	})
+
+	t.Run("Deterministic behavior with fixed seed", func(t *testing.T) {
+		rule := NewDropRule(0.5)
+		// With fixed seed NewPCG(1, 1), the first 5 results should be stable.
+		var results []bool
+		for i := 0; i < 5; i++ {
+			results = append(results, rule.ShouldForward(msg))
+		}
+
+		// Expected results for PCG(1, 1) at 0.5 probability as observed in test execution.
+		expected := []bool{false, true, true, true, false}
+		for i, v := range results {
+			if v != expected[i] {
+				t.Errorf("At step %d, expected %v, got %v", i, expected[i], v)
+			}
+		}
+	})
+}
