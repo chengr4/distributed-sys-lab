@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+pub type TargetId = String;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeState {
     Follower,
@@ -53,6 +55,7 @@ pub struct AppendEntriesArgs {
 pub struct AppendEntriesReply {
     pub term: u64,
     pub success: bool,
+    pub match_index: u64, // index of the last log entry that matches of Follower
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -67,9 +70,11 @@ pub struct Message {
 // The dicision of RaftNode (brain); Relay and engine (body) will execute the side effects
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SideEffect {
-    // to the engine
+    // To the engine
     ResetElectionTimer,
     BroadcastRequestVote(RequestVoteArgs),
     BroadcastAppendEntries(AppendEntriesArgs),
+    // Send follower for log replication
+    SendAppendEntries(TargetId, AppendEntriesArgs),
     ApplyEntry { index: u64, command: String },
 }
