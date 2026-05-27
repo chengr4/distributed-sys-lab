@@ -48,6 +48,33 @@ func (d *DropRule) ShouldForward(msg *raft.Message) bool {
 	return d.rng.Float64() >= d.Probability
 }
 
+// PartitionRule splits the network into isolated groups.
+// Nodes can only communicate if they belong to the same group.
+type PartitionRule struct {
+	// Groups maps NodeID to a group ID (integer).
+	Groups map[string]int
+}
+
+func NewPartitionRule(groups map[string]int) *PartitionRule {
+	return &PartitionRule{
+		Groups: groups,
+	}
+}
+
+func (p *PartitionRule) ShouldForward(msg *raft.Message) bool {
+	fromGroup, okFrom := p.Groups[msg.From]
+	toGroup, okTo := p.Groups[msg.To]
+
+	// If either node is not assigned a group, we assume they are isolated 
+	// (or you can default to true to let them through). 
+	// In Raft testing, explicit groups are usually better.
+	if !okFrom || !okTo {
+		return false 
+	}
+
+	return fromGroup == toGroup
+}
+
 // Relay acts as a central hub for message routing and failure injection.
 type Relay struct {
 	// rwmu protects routingTable and filters for concurrent access.

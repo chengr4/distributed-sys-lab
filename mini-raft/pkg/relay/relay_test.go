@@ -108,3 +108,33 @@ func Test_DelayRule(t *testing.T) {
 		}
 	})
 }
+
+func Test_PartitionRule(t *testing.T) {
+	groups := map[string]int{
+		"Node-A": 1,
+		"Node-B": 1,
+		"Node-C": 2,
+	}
+	rule := NewPartitionRule(groups)
+
+	t.Run("Communication within same group", func(t *testing.T) {
+		msg := &raft.Message{From: "Node-A", To: "Node-B"}
+		if !rule.ShouldForward(msg) {
+			t.Errorf("Node-A and Node-B should be able to communicate")
+		}
+	})
+
+	t.Run("Communication across different groups", func(t *testing.T) {
+		msg := &raft.Message{From: "Node-A", To: "Node-C"}
+		if rule.ShouldForward(msg) {
+			t.Errorf("Node-A and Node-C should be isolated")
+		}
+	})
+
+	t.Run("Communication from/to unassigned nodes", func(t *testing.T) {
+		msg := &raft.Message{From: "Node-A", To: "Node-Unknown"}
+		if rule.ShouldForward(msg) {
+			t.Errorf("Messages to unknown nodes should be blocked by default")
+		}
+	})
+}
