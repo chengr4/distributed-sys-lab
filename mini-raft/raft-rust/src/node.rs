@@ -148,10 +148,28 @@ impl RaftNode {
         }
     }
 
-    pub fn handle_timeout(&mut self) -> Vec<SideEffect> {
+    /// Heartbeat Timeout (Leader only)
+    pub fn handle_heartbeat_timeout(&mut self) -> Vec<SideEffect> {
         let mut side_effects = Vec::new();
 
-        // Safty check: This should never happen for a leader
+        if let NodeState::Leader { next_indices, .. } = &self.state {
+            for peer in &self.peers {
+                let next_index = next_indices.get(peer).copied().unwrap_or(1);
+                if let Some(args) = self.build_append_entries_args(next_index) {
+                    side_effects.push(SideEffect::SendAppendEntries(peer.clone(), args));
+                }
+            }
+            side_effects.push(SideEffect::ResetHeartbeatTimer);
+        }
+
+        side_effects
+    }
+
+    /// Election Timeout (Follower/Candidate only)
+    pub fn handle_election_timeout(&mut self) -> Vec<SideEffect> {
+        let mut side_effects = Vec::new();
+
+        // Safety check: Leaders should not trigger election timeouts
         if let NodeState::Leader { .. } = self.state {
             return side_effects;
         }
@@ -227,6 +245,8 @@ impl RaftNode {
                         leader_commit: self.committed_index,
                     };
                     side_effects.push(SideEffect::BroadcastAppendEntries(heartbeat_args));
+                    // Initial leadership resets the heartbeat timer
+                    side_effects.push(SideEffect::ResetHeartbeatTimer);
                 }
             }
         }
@@ -245,8 +265,6 @@ impl RaftNode {
         }
 
         // Defensive check: Only process replies that belong to the current term's leadership.
-        // This protects against "Ghost Packets" (delayed responses from a previous term where
-        // this node was also a leader) from incorrectly updating indices or state.
         if follower_reply.term != self.current_term {
             return side_effects;
         }
@@ -263,8 +281,6 @@ impl RaftNode {
                 match_indices.insert(from.clone(), new_match_index);
 
                 // Defensive check: Monotonicity Guard.
-                // Ensure next_index only moves forward to handle network reordering
-                // and prevents regressing progress due to delayed success replies.
                 if new_match_index + 1 > current_follower_next_index_in_leader {
                     next_indices.insert(from.clone(), new_match_index + 1);
                 }
@@ -274,10 +290,8 @@ impl RaftNode {
                     next_indices.get(&from).copied().unwrap_or(1);
                 let retry_next_index =
                     if follower_reply.match_index < current_follower_next_index_in_leader {
-                        // Optimization: If the follower-provided hint (match_index) could be use, jump back to that index + 1
                         follower_reply.match_index + 1
                     } else {
-                        // Otherwise, fall back to the conservative decrement by 1
                         current_follower_next_index_in_leader
                             .saturating_sub(1)
                             .max(1)
@@ -285,7 +299,6 @@ impl RaftNode {
 
                 next_indices.insert(from.clone(), retry_next_index);
 
-                // Immediate retry: repackage logs starting from the new next_index
                 if let Some(leader_retry_args) = self.build_append_entries_args(retry_next_index) {
                     side_effects.push(SideEffect::SendAppendEntries(from, leader_retry_args));
                 }
@@ -804,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn test_timeout_triggers_election() {
+    fn test_election_timeout_triggers_election() {
         let mut follower = setup_node();
         follower.current_term = 1;
         follower.log.push(LogEntry {
@@ -813,7 +826,7 @@ mod tests {
             command: "cmd1".to_string(),
         });
 
-        let side_effects = follower.handle_timeout();
+        let side_effects = follower.handle_election_timeout();
 
         let new_candidate = follower;
 
@@ -833,7 +846,7 @@ mod tests {
         let mut node = setup_node();
 
         // 1. Trigger election
-        node.handle_timeout();
+        node.handle_election_timeout();
         // Current state: Candidate, Term 1, Votes: {node-1}
 
         // 2. Receive vote from node-2
@@ -865,5 +878,31 @@ mod tests {
             .iter()
             .any(|se| matches!(se, SideEffect::BroadcastAppendEntries(_)));
         assert!(found_heartbeat);
+        // Verify ResetHeartbeatTimer on transition
+        assert!(side_effects.contains(&SideEffect::ResetHeartbeatTimer));
+    }
+
+    #[test]
+    fn test_leader_heartbeat_timeout_sends_append_entries() {
+        let mut leader = setup_node();
+        leader.state = NodeState::Leader {
+            next_indices: [("node-2".into(), 1), ("node-3".into(), 1)]
+                .into_iter()
+                .collect(),
+            match_indices: [("node-2".into(), 0), ("node-3".into(), 0)]
+                .into_iter()
+                .collect(),
+        };
+        leader.current_term = 1;
+
+        let side_effects = leader.handle_heartbeat_timeout();
+
+        // Check if SendAppendEntries was sent to both peers
+        let count = side_effects
+            .iter()
+            .filter(|se| matches!(se, SideEffect::SendAppendEntries(_, _)))
+            .count();
+        assert_eq!(count, 2);
+        assert!(side_effects.contains(&SideEffect::ResetHeartbeatTimer));
     }
 }

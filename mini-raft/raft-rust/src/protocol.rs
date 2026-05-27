@@ -72,6 +72,7 @@ pub struct Message {
 pub enum SideEffect {
     // To the engine
     ResetElectionTimer,
+    ResetHeartbeatTimer,
     BroadcastRequestVote(RequestVoteArgs),
     BroadcastAppendEntries(AppendEntriesArgs),
     // Send follower for log replication
