@@ -35,6 +35,7 @@ impl RaftNode {
         }
     }
 
+    // Only Follower allow to have this behavior
     pub fn handle_append_entries(
         &mut self,
         args: AppendEntriesArgs,
@@ -59,6 +60,7 @@ impl RaftNode {
         }
 
         // Add new entries and handle conflicts (Paper 5.3 Step 3 & 4)
+        // for heartsbeat case that args.entries is empty
         let mut last_new_entry_index = args.prev_log_index;
         for entry in args.entries {
             last_new_entry_index = entry.index;
@@ -86,6 +88,7 @@ impl RaftNode {
         let reply = AppendEntriesReply {
             term: self.current_term,
             success: true,
+            match_index: last_new_entry_index,
         };
 
         (reply, side_effects)
@@ -230,6 +233,68 @@ impl RaftNode {
         side_effects
     }
 
+    pub fn handle_append_entries_reply(
+        &mut self,
+        from: String,
+        follower_reply: AppendEntriesReply,
+    ) -> Vec<SideEffect> {
+        let mut side_effects = Vec::new();
+
+        if self.maybe_step_down(follower_reply.term) {
+            return side_effects;
+        }
+
+        // Defensive check: Only process replies that belong to the current term's leadership.
+        // This protects against "Ghost Packets" (delayed responses from a previous term where
+        // this node was also a leader) from incorrectly updating indices or state.
+        if follower_reply.term != self.current_term {
+            return side_effects;
+        }
+
+        if let NodeState::Leader {
+            next_indices,
+            match_indices,
+        } = &mut self.state
+        {
+            if follower_reply.success {
+                let current_follower_next_index_in_leader =
+                    next_indices.get(&from).copied().unwrap_or(1);
+                let new_match_index = follower_reply.match_index;
+                match_indices.insert(from.clone(), new_match_index);
+
+                // Defensive check: Monotonicity Guard.
+                // Ensure next_index only moves forward to handle network reordering
+                // and prevents regressing progress due to delayed success replies.
+                if new_match_index + 1 > current_follower_next_index_in_leader {
+                    next_indices.insert(from.clone(), new_match_index + 1);
+                }
+            // TODO: Implement Figure 8 committed_index update
+            } else {
+                let current_follower_next_index_in_leader =
+                    next_indices.get(&from).copied().unwrap_or(1);
+                let retry_next_index =
+                    if follower_reply.match_index < current_follower_next_index_in_leader {
+                        // Optimization: If the follower-provided hint (match_index) could be use, jump back to that index + 1
+                        follower_reply.match_index + 1
+                    } else {
+                        // Otherwise, fall back to the conservative decrement by 1
+                        current_follower_next_index_in_leader
+                            .saturating_sub(1)
+                            .max(1)
+                    };
+
+                next_indices.insert(from.clone(), retry_next_index);
+
+                // Immediate retry: repackage logs starting from the new next_index
+                if let Some(leader_retry_args) = self.build_append_entries_args(retry_next_index) {
+                    side_effects.push(SideEffect::SendAppendEntries(from, leader_retry_args));
+                }
+            }
+        }
+
+        side_effects
+    }
+
     fn has_matching_prev_entry(&self, index: u64, term: u64) -> bool {
         self.log
             .get(index as usize)
@@ -247,10 +312,39 @@ impl RaftNode {
     }
 
     fn reject_append_entries(&self) -> AppendEntriesReply {
+        let hint_index = self.log.last().map(|e| e.index).unwrap_or(0);
         AppendEntriesReply {
             term: self.current_term,
             success: false,
+            match_index: hint_index,
         }
+    }
+
+    fn build_append_entries_args(&self, next_index: u64) -> Option<AppendEntriesArgs> {
+        if next_index == 0 {
+            return None;
+        }
+        let prev_log_index = next_index - 1;
+        let prev_log_term = self
+            .log
+            .get(prev_log_index as usize)
+            .map(|e| e.term)
+            .unwrap_or(0);
+
+        let entries = if (next_index as usize) < self.log.len() {
+            self.log[next_index as usize..].to_vec()
+        } else {
+            vec![]
+        };
+
+        Some(AppendEntriesArgs {
+            term: self.current_term,
+            leader_id: self.id.clone(),
+            prev_log_index,
+            prev_log_term,
+            entries,
+            leader_commit: self.committed_index,
+        })
     }
 }
 
@@ -492,6 +586,109 @@ mod tests {
         leader.handle_append_entries(args);
 
         assert_eq!(leader.committed_index, 1);
+    }
+
+    #[test]
+    fn test_leader_updates_indices_on_successful_append_entries_reply() {
+        let mut leader = setup_node();
+
+        let mut next_indices = HashMap::new();
+        let mut match_indices = HashMap::new();
+        next_indices.insert("node-2".to_string(), 1);
+        match_indices.insert("node-2".to_string(), 0);
+
+        leader.state = NodeState::Leader {
+            next_indices,
+            match_indices,
+        };
+
+        leader.current_term = 2;
+
+        // Assuming leader has index 1 and 2 in its log
+        leader.log.push(LogEntry {
+            term: 2,
+            index: 1,
+            command: "c1".into(),
+        });
+        leader.log.push(LogEntry {
+            term: 2,
+            index: 2,
+            command: "c2".into(),
+        });
+
+        let follower_reply = AppendEntriesReply {
+            term: 2,
+            success: true,
+            match_index: 2,
+        };
+
+        leader.handle_append_entries_reply("node-2".to_string(), follower_reply);
+
+        if let NodeState::Leader {
+            next_indices,
+            match_indices,
+        } = &leader.state
+        {
+            assert_eq!(next_indices.get("node-2"), Some(&3)); // match_index + 1
+            assert_eq!(match_indices.get("node-2"), Some(&2));
+        } else {
+            panic!("Should be leader");
+        }
+    }
+
+    #[test]
+    fn test_leader_decrements_next_index_and_retries_on_failed_append_entries_reply() {
+        let mut leader = setup_node();
+        let mut next_indices = HashMap::new();
+        let mut match_indices = HashMap::new();
+
+        next_indices.insert("node-2".to_string(), 5);
+        match_indices.insert("node-2".to_string(), 0);
+
+        leader.state = NodeState::Leader {
+            next_indices,
+            match_indices,
+        };
+        leader.current_term = 2;
+
+        for i in 1..=5 {
+            leader.log.push(LogEntry {
+                term: 2,
+                index: i,
+                command: format!("cmd{}", i),
+            });
+        }
+
+        let follower_reply = AppendEntriesReply {
+            term: 2,
+            success: false,
+            match_index: 2,
+        };
+
+        let side_effects = leader.handle_append_entries_reply("node-2".to_string(), follower_reply);
+
+        if let NodeState::Leader {
+            next_indices,
+            match_indices: _,
+        } = &leader.state
+        {
+            // match_index + 1
+            assert_eq!(next_indices.get("node-2"), Some(&3));
+        } else {
+            panic!("Should be leader");
+        }
+
+        let found_retry = side_effects.iter().any(|se| {
+            matches!(
+                se,
+                SideEffect::SendAppendEntries(target, args)
+                if target == "node-2" && args.prev_log_index == 2 && args.entries.len() == 3
+            )
+        });
+        assert!(
+            found_retry,
+            "Leader should retry SendAppendEntries with correct arguments"
+        );
     }
 
     #[test]
