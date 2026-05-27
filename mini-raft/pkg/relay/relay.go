@@ -4,12 +4,29 @@ import (
 	"math/rand/v2"
 	"mini-raft/pkg/raft"
 	"sync"
+	"time"
 )
 
 // Filter defines the interface for intercepting and potentially dropping messages.
 type Filter interface {
 	// ShouldForward returns true if the message should be allowed to pass.
 	ShouldForward(msg *raft.Message) bool
+}
+
+// DelayRule simulates network latency by sleeping for a specific duration.
+type DelayRule struct {
+	Delay time.Duration
+}
+
+func NewDelayRule(delay time.Duration) *DelayRule {
+	return &DelayRule{
+		Delay: delay,
+	}
+}
+
+func (d *DelayRule) ShouldForward(msg *raft.Message) bool {
+	time.Sleep(d.Delay)
+	return true
 }
 
 // DropRule simulates random packet loss based on a probability.

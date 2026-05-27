@@ -3,6 +3,7 @@ package relay
 import (
 	"mini-raft/pkg/raft"
 	"testing"
+	"time"
 )
 
 type MockFilter struct {
@@ -85,6 +86,25 @@ func Test_DropRule(t *testing.T) {
 			if v != expected[i] {
 				t.Errorf("At step %d, expected %v, got %v", i, expected[i], v)
 			}
+		}
+	})
+}
+
+func Test_DelayRule(t *testing.T) {
+	msg := &raft.Message{}
+	delay := 100 * time.Millisecond
+
+	t.Run("Verify delay duration", func(t *testing.T) {
+		rule := NewDelayRule(delay)
+		start := time.Now()
+		
+		if !rule.ShouldForward(msg) {
+			t.Errorf("DelayRule should always return true")
+		}
+		
+		elapsed := time.Since(start)
+		if elapsed < delay {
+			t.Errorf("Expected delay of at least %v, got %v", delay, elapsed)
 		}
 	})
 }
