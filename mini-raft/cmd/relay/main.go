@@ -66,15 +66,19 @@ func handleRelayConnection(conn net.Conn, r *relay.Relay) {
 			continue
 		}
 
-		// Resolve target
-		addr, ok := r.ResolveTarget(&msg)
-		if !ok {
-			// Drop message (or log drop)
+		// Resolve target and action
+		addr, action := r.ResolveTarget(&msg)
+		if action == relay.Drop {
 			continue
 		}
 
 		// Forward message
 		go forwardMessage(addr, line)
+		
+		// If Duplicate, send it once more
+		if action == relay.Duplicate {
+			go forwardMessage(addr, line)
+		}
 	}
 }
 

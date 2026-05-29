@@ -7,10 +7,19 @@ import (
 	"time"
 )
 
-// Filter defines the interface for intercepting and potentially dropping messages.
+// Action defines what the relay should do with a message.
+type Action int
+
+const (
+	Drop Action = iota
+	Forward
+	Duplicate
+)
+
+// Filter defines the interface for intercepting and manipulating message flow.
 type Filter interface {
-	// ShouldForward returns true if the message should be allowed to pass.
-	ShouldForward(msg *raft.Message) bool
+	// Should returns the action to be taken for the given message.
+	Should(msg *raft.Message) Action
 }
 
 // DelayRule simulates network latency by sleeping for a specific duration.
@@ -24,17 +33,15 @@ func NewDelayRule(delay time.Duration) *DelayRule {
 	}
 }
 
-func (d *DelayRule) ShouldForward(msg *raft.Message) bool {
+func (d *DelayRule) Should(msg *raft.Message) Action {
 	time.Sleep(d.Delay)
-	return true
+	return Forward
 }
 
 // DropRule simulates random packet loss based on a probability.
 type DropRule struct {
-	// Probability of dropping a message (0.0 to 1.0).
 	Probability float64
-	// Seed for random number generation to make it deterministic if needed.
-	rng *rand.Rand
+	rng         *rand.Rand
 }
 
 func NewDropRule(probability float64) *DropRule {
@@ -44,14 +51,15 @@ func NewDropRule(probability float64) *DropRule {
 	}
 }
 
-func (d *DropRule) ShouldForward(msg *raft.Message) bool {
-	return d.rng.Float64() >= d.Probability
+func (d *DropRule) Should(msg *raft.Message) Action {
+	if d.rng.Float64() < d.Probability {
+		return Drop
+	}
+	return Forward
 }
 
 // PartitionRule splits the network into isolated groups.
-// Nodes can only communicate if they belong to the same group.
 type PartitionRule struct {
-	// Groups maps NodeID to a group ID (integer).
 	Groups map[string]int
 }
 
@@ -61,23 +69,58 @@ func NewPartitionRule(groups map[string]int) *PartitionRule {
 	}
 }
 
-func (p *PartitionRule) ShouldForward(msg *raft.Message) bool {
+func (p *PartitionRule) Should(msg *raft.Message) Action {
 	fromGroup, okFrom := p.Groups[msg.From]
 	toGroup, okTo := p.Groups[msg.To]
 
-	// If either node is not assigned a group, we assume they are isolated 
-	// (or you can default to true to let them through). 
-	// In Raft testing, explicit groups are usually better.
-	if !okFrom || !okTo {
-		return false 
+	if !okFrom || !okTo || fromGroup != toGroup {
+		return Drop
 	}
 
-	return fromGroup == toGroup
+	return Forward
+}
+
+// JitterRule adds random small delays, causing natural message reordering.
+type JitterRule struct {
+	MaxJitter time.Duration
+	rng       *rand.Rand
+}
+
+func NewJitterRule(maxJitter time.Duration) *JitterRule {
+	return &JitterRule{
+		MaxJitter: maxJitter,
+		rng:       rand.New(rand.NewPCG(2, 2)),
+	}
+}
+
+func (j *JitterRule) Should(msg *raft.Message) Action {
+	jitter := time.Duration(j.rng.Int64N(int64(j.MaxJitter)))
+	time.Sleep(jitter)
+	return Forward
+}
+
+// DuplicateRule randomly decides to send a message twice.
+type DuplicateRule struct {
+	Probability float64
+	rng         *rand.Rand
+}
+
+func NewDuplicateRule(probability float64) *DuplicateRule {
+	return &DuplicateRule{
+		Probability: probability,
+		rng:         rand.New(rand.NewPCG(3, 3)),
+	}
+}
+
+func (d *DuplicateRule) Should(msg *raft.Message) Action {
+	if d.rng.Float64() < d.Probability {
+		return Duplicate
+	}
+	return Forward
 }
 
 // Relay acts as a central hub for message routing and failure injection.
 type Relay struct {
-	// rwmu protects routingTable and filters for concurrent access.
 	rwmu         sync.RWMutex
 	routingTable map[string]string // NodeID -> Network Address
 	filters      []Filter
@@ -90,21 +133,30 @@ func (r *Relay) AddFilter(filter Filter) {
 	r.filters = append(r.filters, filter)
 }
 
-// ResolveTarget determines the destination address for a message after checking filters.
-func (r *Relay) ResolveTarget(msg *raft.Message) (string, bool) {
+// ResolveTarget determines the destination address and the action to take.
+func (r *Relay) ResolveTarget(msg *raft.Message) (string, Action) {
 	r.rwmu.RLock()
 	defer r.rwmu.RUnlock()
 
-	// 1. Check if any filter drops the message
+	// 1. Check filters
+	finalAction := Forward
 	for _, filter := range r.filters {
-		if !filter.ShouldForward(msg) {
-			return "", false
+		action := filter.Should(msg)
+		if action == Drop {
+			return "", Drop
+		}
+		if action == Duplicate {
+			finalAction = Duplicate
 		}
 	}
 
 	// 2. Resolve target from routing table
 	addr, ok := r.routingTable[msg.To]
-	return addr, ok
+	if !ok {
+		return "", Drop
+	}
+
+	return addr, finalAction
 }
 
 // RegisterNode adds or updates a node's address in the routing table.
