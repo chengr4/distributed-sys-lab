@@ -321,6 +321,11 @@ impl RaftNode {
             return side_effects;
         }
 
+        let mut should_check_commit = false;
+        let mut new_match_val = 0;
+        let mut retry_needed = false;
+        let mut retry_next_index = 1;
+
         if let NodeState::Leader {
             next_indices,
             match_indices,
@@ -337,12 +342,12 @@ impl RaftNode {
                     next_indices.insert(from.clone(), new_match_index + 1);
                 }
                 
-                side_effects.push(self.build_log_event(&format!("Node {} updated match_index to {}", from, new_match_index)));
-            // TODO: Implement Figure 8 committed_index update
+                new_match_val = new_match_index;
+                should_check_commit = true;
             } else {
                 let current_follower_next_index_in_leader =
                     next_indices.get(&from).copied().unwrap_or(1);
-                let retry_next_index =
+                retry_next_index =
                     if follower_reply.match_index < current_follower_next_index_in_leader {
                         follower_reply.match_index + 1
                     } else {
@@ -352,11 +357,66 @@ impl RaftNode {
                     };
 
                 next_indices.insert(from.clone(), retry_next_index);
-                side_effects.push(self.build_log_event(&format!("Node {} rejected AppendEntries, retrying with next_index {}", from, retry_next_index)));
+                retry_needed = true;
+            }
+        }
 
-                if let Some(leader_retry_args) = self.build_append_entries_args(retry_next_index) {
-                    side_effects.push(SideEffect::SendAppendEntries(from, leader_retry_args));
+        // Now handle the side effects and state updates that require immutable access to self
+        if should_check_commit {
+            side_effects.push(self.build_log_event(&format!("Node {} updated match_index to {}", from, new_match_val)));
+            
+            // --- Phase 4.2 & Figure 8 Safety: Update committed_index ---
+            // Find the maximum index N such that:
+            // 1. N > committed_index
+            // 2. A majority of matchIndex[i] >= N
+            // 3. log[N].term == current_term (Figure 8 Safety)
+            
+            let mut match_array = Vec::new();
+            if let NodeState::Leader { match_indices, .. } = &self.state {
+                match_array = match_indices.values().copied().collect();
+            }
+            
+            if !match_array.is_empty() {
+                // Add leader's own match_index (which is the last log index)
+                let leader_last_index = self.log.last().unwrap().index;
+                match_array.push(leader_last_index);
+                match_array.sort_unstable(); // Ascending order
+                
+                // To have a majority, the value must be at or above the median.
+                let majority = (self.peers.len() + 1) / 2 + 1;
+                let median_index = match_array.len().saturating_sub(majority);
+                let potential_commit_index = match_array[median_index];
+
+                if potential_commit_index > self.committed_index {
+                    // Check Figure 8 Safety: Is log[N].term == current_term?
+                    if let Some(entry) = self.log.get(potential_commit_index as usize) {
+                        if entry.term == self.current_term {
+                            self.committed_index = potential_commit_index;
+                            side_effects.push(self.build_log_event(&format!(
+                                "Leader committed up to index {} (Majority Consensus)",
+                                self.committed_index
+                            )));
+                            
+                            // Generate ApplyEntry side effects for the newly committed logs
+                            while self.committed_index > self.last_applied {
+                                self.last_applied += 1;
+                                if let Some(_applied_entry) = self.log.get(self.last_applied as usize) {
+                                     side_effects.push(self.build_log_event(&format!(
+                                        "Applying command at index {}",
+                                        self.last_applied
+                                    )));
+                                    // In a real system, you'd yield SideEffect::ApplyEntry here
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+        } else if retry_needed {
+            side_effects.push(self.build_log_event(&format!("Node {} rejected AppendEntries, retrying with next_index {}", from, retry_next_index)));
+
+            if let Some(leader_retry_args) = self.build_append_entries_args(retry_next_index) {
+                side_effects.push(SideEffect::SendAppendEntries(from, leader_retry_args));
             }
         }
 
@@ -962,5 +1022,44 @@ mod tests {
             .count();
         assert_eq!(count, 2);
         assert!(side_effects.contains(&SideEffect::ResetHeartbeatTimer));
+    }
+
+    #[test]
+    fn test_leader_does_not_commit_old_term_logs_directly() {
+        let mut leader = setup_node();
+
+        let mut next_indices = HashMap::new();
+        let mut match_indices = HashMap::new();
+        next_indices.insert("node-2".to_string(), 2);
+        next_indices.insert("node-3".to_string(), 2);
+        match_indices.insert("node-2".to_string(), 0);
+        match_indices.insert("node-3".to_string(), 0);
+
+        leader.state = NodeState::Leader {
+            next_indices,
+            match_indices,
+        };
+
+        leader.current_term = 3;
+
+        // Assuming leader has index 1 (Term 2) in its log
+        leader.log.push(LogEntry {
+            term: 2,
+            index: 1,
+            command: "old_cmd".into(),
+        });
+
+        // Follower (node-2) replies success for index 1
+        let follower_reply = AppendEntriesReply {
+            term: 3,
+            success: true,
+            match_index: 1,
+        };
+
+        leader.handle_append_entries_reply("node-2".to_string(), follower_reply);
+
+        // Even though Index 1 is now on a majority (Leader + node-2), 
+        // it's from an older term (Term 2), so committed_index shouldn't advance directly.
+        assert_eq!(leader.committed_index, 0, "Leader should NOT commit old term logs directly (Figure 8 Safety)");
     }
 }
