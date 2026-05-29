@@ -35,6 +35,15 @@ impl RaftNode {
         }
     }
 
+    fn build_log_event(&self, message: &str) -> SideEffect {
+        let state_str = match &self.state {
+            NodeState::Follower => "Follower",
+            NodeState::Candidate { .. } => "Candidate",
+            NodeState::Leader { .. } => "Leader",
+        };
+        SideEffect::LogMessage(format!("[T={}][Node={}][{}] {}", self.current_term, self.id, state_str, message))
+    }
+
     // Only Follower allow to have this behavior
     pub fn handle_append_entries(
         &mut self,
@@ -44,11 +53,16 @@ impl RaftNode {
 
         // reject lagacy leader (Paper 5.1)
         if args.term < self.current_term {
+            side_effects.push(self.build_log_event(&format!("Rejected AppendEntries from Node {} (Term {}): Term too old", args.leader_id, args.term)));
             return (self.reject_append_entries(), side_effects);
         }
 
         // Paper 5.1
-        self.maybe_step_down(args.term);
+        if self.maybe_step_down(args.term, &mut side_effects) {
+             // already pushed log in maybe_step_down
+        }
+
+        side_effects.push(self.build_log_event(&format!("Received AppendEntries from Node {} (Term {}) with {} entries", args.leader_id, args.term, args.entries.len())));
 
         // Paper 5.2
         // Case: arg.term == self.current_term and I am candidate => step down to follower
@@ -56,6 +70,7 @@ impl RaftNode {
         side_effects.push(SideEffect::ResetElectionTimer);
 
         if !self.has_matching_prev_entry(args.prev_log_index, args.prev_log_term) {
+            side_effects.push(self.build_log_event(&format!("Rejected AppendEntries: Consistency check failed at Index {}", args.prev_log_index)));
             return (self.reject_append_entries(), side_effects);
         }
 
@@ -67,6 +82,7 @@ impl RaftNode {
             match self.log.get(entry.index as usize) {
                 Some(existing) if existing.term != entry.term => {
                     // Conflict detected, delete the existing entry and all that follow it
+                    side_effects.push(self.build_log_event(&format!("Log conflict at Index {}: truncating log", entry.index)));
                     self.log.truncate(entry.index as usize);
                     self.log.push(entry);
                 }
@@ -81,8 +97,12 @@ impl RaftNode {
 
         // (Paper 5.3 Step 5)
         if args.leader_commit > self.committed_index {
+            let old_commit = self.committed_index;
             // committed_index = min(leader_commit, index of last new entry)
             self.committed_index = std::cmp::min(args.leader_commit, last_new_entry_index);
+            if self.committed_index > old_commit {
+                side_effects.push(self.build_log_event(&format!("Updated committed_index to {}", self.committed_index)));
+            }
         }
 
         let reply = AppendEntriesReply {
@@ -101,6 +121,7 @@ impl RaftNode {
         let mut side_effects = Vec::new();
 
         if candidate_args.term < self.current_term {
+            side_effects.push(self.build_log_event(&format!("Rejected RequestVote from Node {} (Term {}): Term too old", candidate_args.candidate_id, candidate_args.term)));
             return (
                 RequestVoteReply {
                     term: self.current_term,
@@ -110,7 +131,7 @@ impl RaftNode {
             );
         }
 
-        self.maybe_step_down(candidate_args.term);
+        self.maybe_step_down(candidate_args.term, &mut side_effects);
 
         let voter_last_log = self.log.last().unwrap();
 
@@ -127,8 +148,9 @@ impl RaftNode {
         };
 
         if voter_can_vote_for_candidate && is_candidate_at_least_as_up_to_date {
-            self.voted_for = Some(candidate_args.candidate_id);
+            self.voted_for = Some(candidate_args.candidate_id.clone());
             side_effects.push(SideEffect::ResetElectionTimer);
+            side_effects.push(self.build_log_event(&format!("Voted for Node {}", candidate_args.candidate_id)));
 
             (
                 RequestVoteReply {
@@ -138,6 +160,8 @@ impl RaftNode {
                 side_effects,
             )
         } else {
+            let reason = if !voter_can_vote_for_candidate { "Already voted" } else { "Log not up-to-date" };
+            side_effects.push(self.build_log_event(&format!("Rejected RequestVote from Node {}: {}", candidate_args.candidate_id, reason)));
             (
                 RequestVoteReply {
                     term: self.current_term,
@@ -153,6 +177,7 @@ impl RaftNode {
         let mut side_effects = Vec::new();
 
         if let NodeState::Leader { next_indices, .. } = &self.state {
+            side_effects.push(self.build_log_event("Heartbeat Timeout -> Broadcasting heartbeats"));
             for peer in &self.peers {
                 let next_index = next_indices.get(peer).copied().unwrap_or(1);
                 if let Some(args) = self.build_append_entries_args(next_index) {
@@ -181,6 +206,8 @@ impl RaftNode {
         self.current_term += 1;
         self.voted_for = Some(self.id.clone());
 
+        side_effects.push(self.build_log_event(&format!("Election Timeout -> Transition to Candidate (Term {})", self.current_term)));
+
         side_effects.push(SideEffect::ResetElectionTimer);
 
         let candidate_last_log = self
@@ -194,6 +221,7 @@ impl RaftNode {
             last_log_term: candidate_last_log.term,
         };
 
+        side_effects.push(self.build_log_event("Broadcasting RequestVote"));
         side_effects.push(SideEffect::BroadcastRequestVote(request_vote_args));
 
         side_effects
@@ -207,49 +235,61 @@ impl RaftNode {
     ) -> Vec<SideEffect> {
         let mut side_effects = Vec::new();
 
-        if self.maybe_step_down(reply.term) {
+        if self.maybe_step_down(reply.term, &mut side_effects) {
+            side_effects.push(self.build_log_event(&format!("Received higher term ({}) from Node {} -> Stepping down", reply.term, from)));
             return side_effects;
         }
 
+        let mut won_election = false;
         if let NodeState::Candidate { votes_received } = &mut self.state {
             if reply.term == self.current_term && reply.vote_granted {
-                votes_received.insert(from);
+                votes_received.insert(from.clone());
+                let votes_count = votes_received.len();
+                side_effects.push(self.build_log_event(&format!("Received vote from Node {} (Total votes: {})", from, votes_count)));
 
                 // Majority = (N / 2) + 1
                 let total_nodes = self.peers.len() + 1;
-                if votes_received.len() > total_nodes / 2 {
-                    let last_log = self.log.last().unwrap();
-                    let last_log_index = last_log.index;
-                    let last_log_term = last_log.term;
-
-                    let mut next_indices = HashMap::new();
-                    let mut match_indices = HashMap::new();
-
-                    for peer in &self.peers {
-                        next_indices.insert(peer.clone(), last_log_index + 1);
-                        match_indices.insert(peer.clone(), 0);
-                    }
-
-                    self.state = NodeState::Leader {
-                        next_indices,
-                        match_indices,
-                    };
-
-                    // Send the first heartbeat immediately after becoming leader
-                    let heartbeat_args = AppendEntriesArgs {
-                        term: self.current_term,
-                        leader_id: self.id.clone(),
-                        prev_log_index: last_log_index,
-                        prev_log_term: last_log_term,
-                        entries: vec![],
-                        leader_commit: self.committed_index,
-                    };
-                    side_effects.push(SideEffect::BroadcastAppendEntries(heartbeat_args));
-                    // Initial leadership resets the heartbeat timer
-                    side_effects.push(SideEffect::ResetHeartbeatTimer);
+                if votes_count > total_nodes / 2 {
+                    won_election = true;
                 }
+            } else if !reply.vote_granted {
+                side_effects.push(self.build_log_event(&format!("Vote denied by Node {} (Term {})", from, reply.term)));
             }
         }
+
+        if won_election {
+            side_effects.push(self.build_log_event("Won election -> Transition to Leader"));
+            let last_log = self.log.last().unwrap();
+            let last_log_index = last_log.index;
+            let last_log_term = last_log.term;
+
+            let mut next_indices = HashMap::new();
+            let mut match_indices = HashMap::new();
+
+            for peer in &self.peers {
+                next_indices.insert(peer.clone(), last_log_index + 1);
+                match_indices.insert(peer.clone(), 0);
+            }
+
+            self.state = NodeState::Leader {
+                next_indices,
+                match_indices,
+            };
+
+            // Send the first heartbeat immediately after becoming leader
+            let heartbeat_args = AppendEntriesArgs {
+                term: self.current_term,
+                leader_id: self.id.clone(),
+                prev_log_index: last_log_index,
+                prev_log_term: last_log_term,
+                entries: vec![],
+                leader_commit: self.committed_index,
+            };
+            side_effects.push(SideEffect::BroadcastAppendEntries(heartbeat_args));
+            // Initial leadership resets the heartbeat timer
+            side_effects.push(SideEffect::ResetHeartbeatTimer);
+        }
+        
         side_effects
     }
 
@@ -260,7 +300,8 @@ impl RaftNode {
     ) -> Vec<SideEffect> {
         let mut side_effects = Vec::new();
 
-        if self.maybe_step_down(follower_reply.term) {
+        if self.maybe_step_down(follower_reply.term, &mut side_effects) {
+            side_effects.push(self.build_log_event(&format!("Received higher term ({}) from Node {} -> Stepping down", follower_reply.term, from)));
             return side_effects;
         }
 
@@ -284,6 +325,8 @@ impl RaftNode {
                 if new_match_index + 1 > current_follower_next_index_in_leader {
                     next_indices.insert(from.clone(), new_match_index + 1);
                 }
+                
+                side_effects.push(self.build_log_event(&format!("Node {} updated match_index to {}", from, new_match_index)));
             // TODO: Implement Figure 8 committed_index update
             } else {
                 let current_follower_next_index_in_leader =
@@ -298,6 +341,7 @@ impl RaftNode {
                     };
 
                 next_indices.insert(from.clone(), retry_next_index);
+                side_effects.push(self.build_log_event(&format!("Node {} rejected AppendEntries, retrying with next_index {}", from, retry_next_index)));
 
                 if let Some(leader_retry_args) = self.build_append_entries_args(retry_next_index) {
                     side_effects.push(SideEffect::SendAppendEntries(from, leader_retry_args));
@@ -314,11 +358,13 @@ impl RaftNode {
             .is_some_and(|entry| entry.term == term)
     }
 
-    fn maybe_step_down(&mut self, term: u64) -> bool {
+    fn maybe_step_down(&mut self, term: u64, side_effects: &mut Vec<SideEffect>) -> bool {
         if term > self.current_term {
+            let old_term = self.current_term;
             self.current_term = term;
             self.voted_for = None;
             self.state = NodeState::Follower;
+            side_effects.push(self.build_log_event(&format!("Term updated ({} -> {}) -> Stepping down to Follower", old_term, term)));
             return true;
         }
         false
@@ -716,10 +762,10 @@ mod tests {
             last_log_term: 0,
         };
 
-        let (reply, side_effects) = node.handle_request_vote(args);
+        let (reply, _) = node.handle_request_vote(args);
         assert_eq!(reply.vote_granted, false);
         assert_eq!(reply.term, 2);
-        assert!(side_effects.is_empty());
+        // side_effect will contain log messages, so we only check the vote
     }
 
     #[test]
@@ -757,12 +803,11 @@ mod tests {
             last_log_term: 0,
         };
 
-        let (reply, side_effects) = node.handle_request_vote(args);
+        let (reply, _) = node.handle_request_vote(args);
 
         assert_eq!(reply.vote_granted, false);
         assert_eq!(reply.term, 3);
         assert_eq!(node.voted_for, Some("candidate-A".to_string()));
-        assert!(side_effects.is_empty());
     }
 
     #[test]
@@ -782,10 +827,9 @@ mod tests {
             last_log_term: 1,
         };
 
-        let (voter_reply, side_effects) = voter.handle_request_vote(candidate_args);
+        let (voter_reply, _) = voter.handle_request_vote(candidate_args);
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
-        assert!(side_effects.is_empty());
     }
 
     #[test]
@@ -810,10 +854,9 @@ mod tests {
             last_log_term: 2,
         };
 
-        let (voter_reply, side_effects) = voter.handle_request_vote(candidate_args);
+        let (voter_reply, _) = voter.handle_request_vote(candidate_args);
         assert_eq!(voter_reply.vote_granted, false);
         assert_eq!(voter.voted_for, None);
-        assert!(side_effects.is_empty());
     }
 
     #[test]

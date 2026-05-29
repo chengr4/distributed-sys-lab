@@ -78,4 +78,6 @@ pub enum SideEffect {
     // Send follower for log replication
     SendAppendEntries(TargetId, AppendEntriesArgs),
     ApplyEntry { index: u64, command: String },
+    // Observability
+    LogMessage(String),
 }
