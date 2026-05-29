@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"syscall"
 
 	"mini-raft/pkg/raft"
 	"mini-raft/pkg/relay"
@@ -21,7 +23,16 @@ func main() {
 	r.RegisterNode("B", "127.0.0.1:9002")
 	r.RegisterNode("C", "127.0.0.1:9003")
 
-	listener, err := net.Listen("tcp", "0.0.0.0:"+relayPort)
+	// Use ListenConfig to set SO_REUSEADDR via Control function
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			})
+		},
+	}
+
+	listener, err := lc.Listen(context.Background(), "tcp", "0.0.0.0:"+relayPort)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}

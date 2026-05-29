@@ -81,7 +81,19 @@ fn main() {
     let tx_clone = tx.clone();
     
     thread::spawn(move || {
-        let listener = TcpListener::bind(&listen_addr).expect("Failed to bind port");
+        let addr: std::net::SocketAddr = listen_addr.parse().expect("Invalid listen address");
+        let socket = socket2::Socket::new(socket2::Domain::for_address(addr), socket2::Type::STREAM, None).expect("Failed to create socket");
+        
+        // SO_REUSEADDR and SO_REUSEPORT allow immediate rebinding of a port.
+        socket.set_reuse_address(true).expect("Failed to set SO_REUSEADDR");
+        #[cfg(not(windows))]
+        socket.set_reuse_port(true).expect("Failed to set SO_REUSEPORT");
+        
+        socket.bind(&addr.into()).expect("Failed to bind port");
+        socket.listen(128).expect("Failed to listen");
+        
+        let listener: TcpListener = socket.into();
+        
         for stream in listener.incoming() {
             if let Ok(stream) = stream {
                 let n = Arc::clone(&node_clone);

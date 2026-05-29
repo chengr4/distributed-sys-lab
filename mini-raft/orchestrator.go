@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -32,7 +31,6 @@ func (tw *TaggedWriter) Write(p []byte) (n int, err error) {
 		if b == '\n' {
 			line := tw.buf.String()
 			tw.buf.Reset()
-			// Format: [Color][Prefix][Reset] Message
 			fmt.Fprintf(tw.Writer, "%s[%s]%s %s", tw.Color, tw.Prefix, "\033[0m", line)
 		}
 	}
@@ -48,108 +46,97 @@ var colors = []string{
 }
 
 func main() {
-	// 1. Build Rust project
-	fmt.Println("Building Rust node...")
-	buildCmd := exec.Command("cargo", "build")
-	buildCmd.Dir = "raft-rust"
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
-	if err := buildCmd.Run(); err != nil {
-		log.Fatalf("Failed to build Rust: %v", err)
+	// 1. Pre-build Phase (Serial to avoid lock contention)
+	fmt.Println("\033[1m[1/2] Building components...\033[0m")
+
+	fmt.Print("Building Rust nodes... ")
+	rustBuild := exec.Command("cargo", "build")
+	rustBuild.Dir = "raft-rust"
+	if err := rustBuild.Run(); err != nil {
+		fmt.Println("\033[31mFAILED\033[0m")
+		log.Fatalf("Rust build error: %v", err)
 	}
+	fmt.Println("\033[32mDONE\033[0m")
 
-	// Track all processes for cleanup
+	fmt.Print("Building Relay server... ")
+	goBuild := exec.Command("go", "build", "-o", "relay_bin", "cmd/relay/main.go")
+	if err := goBuild.Run(); err != nil {
+		fmt.Println("\033[31mFAILED\033[0m")
+		log.Fatalf("Go build error: %v", err)
+	}
+	fmt.Println("\033[32mDONE\033[0m")
+
+	// 2. Runtime Phase
+	fmt.Println("\n\033[1m[2/2] Launching cluster...\033[0m")
 	var processes []ProcessInfo
-	var mu sync.Mutex
 
-	// Signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// 2. Start Relay
-	fmt.Println("Starting Relay Server...")
-	relayCmd := exec.Command("go", "run", "cmd/relay/main.go")
+	// Launch Relay
+	relayCmd := exec.Command("./relay_bin")
+	relayCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	relayCmd.Stdout = &TaggedWriter{Prefix: "Relay", Color: "\033[31m", Writer: os.Stdout}
 	relayCmd.Stderr = relayCmd.Stdout
 	if err := relayCmd.Start(); err != nil {
 		log.Fatalf("Failed to start Relay: %v", err)
 	}
-	mu.Lock()
 	processes = append(processes, ProcessInfo{ID: "Relay", Cmd: relayCmd})
-	mu.Unlock()
+	fmt.Println("Relay started.")
 
-	time.Sleep(1 * time.Second) // Wait for relay to start
+	time.Sleep(500 * time.Millisecond)
 
-	// 3. Start Nodes
+	// Launch Nodes
 	nodes := []struct {
-		id    string
-		port  string
-		peers []string
+		id   string
+		port string
 	}{
-		{"A", "9001", []string{"B", "C"}},
-		{"B", "9002", []string{"A", "C"}},
-		{"C", "9003", []string{"A", "B"}},
+		{"A", "9001"},
+		{"B", "9002"},
+		{"C", "9003"},
 	}
-
 	relayAddr := "127.0.0.1:8080"
-	var wg sync.WaitGroup
 
 	for i, n := range nodes {
-		wg.Add(1)
-		go func(i int, id, port string, peers []string) {
-			defer wg.Done()
-
-			// Use 'cargo run' to execute the binary
-			args := append([]string{"run", "--bin", "raft-rust", "--", id, port, relayAddr}, peers...)
-			cmd := exec.Command("cargo", args...)
-			cmd.Dir = "raft-rust"
-
-			// Use TaggedWriter for colored output
-			writer := &TaggedWriter{
-				Prefix: id,
-				Color:  colors[i%len(colors)],
-				Writer: os.Stdout,
+		peers := []string{}
+		for _, other := range nodes {
+			if other.id != n.id {
+				peers = append(peers, other.id)
 			}
-			cmd.Stdout = writer
-			cmd.Stderr = writer
-
-			if err := cmd.Start(); err != nil {
-				log.Printf("Node %s failed to start: %v", id, err)
-				return
-			}
-
-			mu.Lock()
-			processes = append(processes, ProcessInfo{ID: id, Cmd: cmd})
-			mu.Unlock()
-
-			// Wait for the command to finish (or be killed)
-			if err := cmd.Wait(); err != nil {
-				// Avoid logging error if it was killed by orchestrator
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-						return
-					}
-				}
-				log.Printf("Node %s exited with error: %v", id, err)
-			}
-		}(i, n.id, n.port, n.peers)
-	}
-
-	fmt.Println("\n>>> Cluster started. Press Ctrl+C to stop and cleanup. <<<")
-
-	// Wait for Ctrl+C
-	<-sigChan
-	fmt.Println("\nShutting down and cleaning up processes...")
-
-	mu.Lock()
-	for _, p := range processes {
-		fmt.Printf("Killing process: %s (PID: %d)...\n", p.ID, p.Cmd.Process.Pid)
-		if err := p.Cmd.Process.Kill(); err != nil {
-			fmt.Printf("Failed to kill %s: %v\n", p.ID, err)
 		}
-	}
-	mu.Unlock()
 
-	fmt.Println("Cleanup complete. Exiting.")
-	os.Exit(0)
+		args := append([]string{n.id, n.port, relayAddr}, peers...)
+		cmd := exec.Command("./target/debug/raft-rust", args...)
+		cmd.Dir = "raft-rust"
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		
+		writer := &TaggedWriter{
+			Prefix: n.id,
+			Color:  colors[i%len(colors)],
+			Writer: os.Stdout,
+		}
+		cmd.Stdout = writer
+		cmd.Stderr = writer
+
+		if err := cmd.Start(); err != nil {
+			log.Printf("Node %s failed to start: %v", n.id, err)
+			continue
+		}
+		processes = append(processes, ProcessInfo{ID: n.id, Cmd: cmd})
+	}
+
+	fmt.Println("\n>>> Cluster running. Press Ctrl+C to stop. <<<")
+
+	<-sigChan
+	fmt.Println("\n\n\033[1mShutting down...\033[0m")
+
+	for _, p := range processes {
+		fmt.Printf("Cleaning up %s... ", p.ID)
+		// Send SIGKILL to the process group
+		syscall.Kill(-p.Cmd.Process.Pid, syscall.SIGKILL)
+		p.Cmd.Wait()
+		fmt.Println("\033[32mOK\033[0m")
+	}
+
+	fmt.Println("\033[1mAll processes terminated. Clean exit.\033[0m")
 }
