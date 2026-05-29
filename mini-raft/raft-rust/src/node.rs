@@ -35,13 +35,22 @@ impl RaftNode {
         }
     }
 
-    fn build_log_event(&self, message: &str) -> SideEffect {
-        let state_str = match &self.state {
+    fn get_state_str(&self) -> &str {
+        match &self.state {
             NodeState::Follower => "Follower",
             NodeState::Candidate { .. } => "Candidate",
             NodeState::Leader { .. } => "Leader",
-        };
-        SideEffect::LogMessage(format!("[T={}][Node={}][{}] {}", self.current_term, self.id, state_str, message))
+        }
+    }
+
+    fn build_log_event(&self, message: &str) -> SideEffect {
+        SideEffect::LogMessage(format!(
+            "[T={}][Node={}][{}] {}",
+            self.current_term,
+            self.id,
+            self.get_state_str(),
+            message
+        ))
     }
 
     // Only Follower allow to have this behavior
@@ -58,14 +67,15 @@ impl RaftNode {
         }
 
         // Paper 5.1
-        if self.maybe_step_down(args.term, &mut side_effects) {
-             // already pushed log in maybe_step_down
-        }
+        self.maybe_step_down(args.term, &mut side_effects);
 
         side_effects.push(self.build_log_event(&format!("Received AppendEntries from Node {} (Term {}) with {} entries", args.leader_id, args.term, args.entries.len())));
 
         // Paper 5.2
         // Case: arg.term == self.current_term and I am candidate => step down to follower
+        if matches!(self.state, NodeState::Candidate { .. }) {
+             side_effects.push(self.build_log_event("Recognized Leader -> Stepping down to Follower"));
+        }
         self.state = NodeState::Follower;
         side_effects.push(SideEffect::ResetElectionTimer);
 
@@ -199,6 +209,7 @@ impl RaftNode {
             return side_effects;
         }
 
+        let old_state_str = self.get_state_str().to_string();
         let mut votes_received = HashSet::new();
         votes_received.insert(self.id.clone()); // vote for self
 
@@ -206,7 +217,7 @@ impl RaftNode {
         self.current_term += 1;
         self.voted_for = Some(self.id.clone());
 
-        side_effects.push(self.build_log_event(&format!("Election Timeout -> Transition to Candidate (Term {})", self.current_term)));
+        side_effects.push(self.build_log_event(&format!("Election Timeout -> Transition: {} -> Candidate (Term {})", old_state_str, self.current_term)));
 
         side_effects.push(SideEffect::ResetElectionTimer);
 
@@ -236,7 +247,6 @@ impl RaftNode {
         let mut side_effects = Vec::new();
 
         if self.maybe_step_down(reply.term, &mut side_effects) {
-            side_effects.push(self.build_log_event(&format!("Received higher term ({}) from Node {} -> Stepping down", reply.term, from)));
             return side_effects;
         }
 
@@ -258,7 +268,7 @@ impl RaftNode {
         }
 
         if won_election {
-            side_effects.push(self.build_log_event("Won election -> Transition to Leader"));
+            let old_state_str = self.get_state_str().to_string();
             let last_log = self.log.last().unwrap();
             let last_log_index = last_log.index;
             let last_log_term = last_log.term;
@@ -275,6 +285,8 @@ impl RaftNode {
                 next_indices,
                 match_indices,
             };
+
+            side_effects.push(self.build_log_event(&format!("Won election -> Transition: {} -> Leader", old_state_str)));
 
             // Send the first heartbeat immediately after becoming leader
             let heartbeat_args = AppendEntriesArgs {
@@ -301,7 +313,6 @@ impl RaftNode {
         let mut side_effects = Vec::new();
 
         if self.maybe_step_down(follower_reply.term, &mut side_effects) {
-            side_effects.push(self.build_log_event(&format!("Received higher term ({}) from Node {} -> Stepping down", follower_reply.term, from)));
             return side_effects;
         }
 
@@ -361,10 +372,14 @@ impl RaftNode {
     fn maybe_step_down(&mut self, term: u64, side_effects: &mut Vec<SideEffect>) -> bool {
         if term > self.current_term {
             let old_term = self.current_term;
+            let old_state_str = self.get_state_str().to_string();
             self.current_term = term;
             self.voted_for = None;
             self.state = NodeState::Follower;
-            side_effects.push(self.build_log_event(&format!("Term updated ({} -> {}) -> Stepping down to Follower", old_term, term)));
+            side_effects.push(self.build_log_event(&format!(
+                "Term updated ({} -> {}) -> Transition: {} -> Follower",
+                old_term, term, old_state_str
+            )));
             return true;
         }
         false

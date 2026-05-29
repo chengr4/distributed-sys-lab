@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"mini-rpc/pkg"
 	"os"
@@ -24,6 +25,20 @@ func main() {
 	}
 
 	// Start CLI in the foreground using the library
+	client_dialer := &minirpc.RPCDialer{
+		ConnectTimeout: 3 * time.Second,
+		RequestTimeout: 5 * time.Second,
+	}
+	cli := minirpc.NewCLI(os.Stdin, os.Stdout, client_dialer, minirpc.NewLocalAdapter(service))
+	shouldExit := cli.Run()
+
+	if shouldExit {
+		os.Exit(0)
+	}
+
+	select {}
+}
+he library
 	client_dialer := &minirpc.RPCDialer{
 		ConnectTimeout: 3 * time.Second,
 		RequestTimeout: 5 * time.Second,
