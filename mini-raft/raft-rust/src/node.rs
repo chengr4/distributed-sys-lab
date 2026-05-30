@@ -363,7 +363,7 @@ impl RaftNode {
 
         // Now handle the side effects and state updates that require immutable access to self
         if should_check_commit {
-            side_effects.push(self.build_log_event(&format!("Node {} updated match_index to {}", from, new_match_val)));
+            side_effects.push(self.build_log_event(&format!("Updated match_index for peer {} to {}", from, new_match_val)));
             
             // --- Phase 4.2 & Figure 8 Safety: Update committed_index ---
             // Find the maximum index N such that:
