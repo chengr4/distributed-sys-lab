@@ -197,6 +197,42 @@ impl RaftNode {
         }
     }
 
+    /// Propose a command to be appended to the log.
+    /// Returns `Some((index, term))` if the node is the leader and the command was accepted locally.
+    /// The command is NOT committed until a majority of nodes have replicated it.
+    /// The client should wait for the state machine to apply this (index, term).
+    pub fn propose_command(&mut self, command: String) -> (Option<(u64, u64)>, Vec<SideEffect>) {
+        let mut side_effects = Vec::new();
+
+        if let NodeState::Leader { .. } = self.state {
+            let last_index = self.log.last().map(|e| e.index).unwrap_or(0);
+            let new_index = last_index + 1;
+            let term = self.current_term;
+
+            let entry = LogEntry {
+                term,
+                index: new_index,
+                command: command.clone(),
+            };
+
+            self.log.push(entry);
+            side_effects.push(self.build_log_event(&format!(
+                "Proposed command '{}' at index {}",
+                command, new_index
+            )));
+
+            // Immediately broadcast the new entry to followers (Paper 5.3)
+            if let Some(args) = self.build_append_entries_args(new_index) {
+                side_effects.push(SideEffect::BroadcastAppendEntries(args));
+            }
+
+            return (Some((new_index, term)), side_effects);
+        }
+
+        side_effects.push(self.build_log_event("Rejected command proposal: Not the leader"));
+        (None, side_effects)
+    }
+
     /// Heartbeat Timeout (Leader only)
     pub fn handle_heartbeat_timeout(&mut self) -> Vec<SideEffect> {
         let mut side_effects = Vec::new();
@@ -1116,7 +1152,7 @@ mod tests {
     }
 
     #[test]
-    fn test_leader_appends_and_broadcasts_client_command() {
+    fn test_leader_proposes_command() {
         let mut leader = setup_node();
         leader.state = NodeState::Leader {
             next_indices: HashMap::new(),
@@ -1125,14 +1161,19 @@ mod tests {
         leader.current_term = 2;
 
         let cmd = "set x=10".to_string();
-        // Call the expected method (will fail to compile, establishing Red Phase)
-        let (success, side_effects) = leader.handle_client_command(cmd.clone());
+        
+        // Call the expected method `propose_command` (will fail to compile, establishing Red Phase)
+        // It should return an Option<(u64, u64)> representing (index, term), and SideEffects
+        let (proposed_info, side_effects) = leader.propose_command(cmd.clone());
 
-        assert!(success);
+        assert!(proposed_info.is_some(), "Leader should accept the proposal");
+        let (index, term) = proposed_info.unwrap();
+        assert_eq!(index, 1, "First proposed log should be at index 1 (after sentinel)");
+        assert_eq!(term, 2, "Proposed log term should match leader's current term");
+
         // Verify local log append
         assert_eq!(leader.log.len(), 2);
         assert_eq!(leader.log.last().unwrap().command, cmd);
-        assert_eq!(leader.log.last().unwrap().term, 2);
 
         // Verify immediate broadcast side effect
         let found_broadcast = side_effects.iter().any(|se| {
