@@ -38,12 +38,24 @@ type AppendEntriesReply struct {
 	Success bool   `json:"success"`
 }
 
-// Message is the generic envelope for all node-to-node communication.
+// ClientRequestArgs is the argument for a command from an external client.
+type ClientRequestArgs struct {
+	Command string `json:"command"`
+}
+
+// ClientRequestReply is the response to a client request.
+type ClientRequestReply struct {
+	Success  bool   `json:"success"`
+	LeaderID string `json:"leader_id"` // Hint to redirect client to the current leader
+	Response string `json:"response"`  // Optional feedback from the state machine
+}
+
+// Message is the generic envelope for all node-to-node and client-to-node communication.
 // From and To allow Relay to know the route without needing to inspect the payload
 // Payload implements the decoupling of the transport layer and the logic layer
 type Message struct {
 	From    string `json:"from"`
 	To      string `json:"to"`
-	Type    string `json:"type"`    // "RequestVote", "AppendEntries", "VoteReply", "AppendReply"
-	Payload []byte `json:"payload"` //
+	Type    string `json:"type"`    // "RequestVote", "AppendEntries", "VoteReply", "AppendReply", "ClientRequest", "ClientReply"
+	Payload []byte `json:"payload"` 
 }
