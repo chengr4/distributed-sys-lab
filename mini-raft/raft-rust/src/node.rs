@@ -7,6 +7,7 @@ pub struct RaftNode {
     pub peers: Vec<String>,
     pub current_term: u64,
     pub voted_for: Option<String>, // each term can only vote for one candidate
+    pub leader_id: Option<String>, // track current leader for redirection
     pub log: Vec<LogEntry>,
     pub state: NodeState,
 
@@ -28,6 +29,7 @@ impl RaftNode {
             peers,
             current_term: 0,
             voted_for: None,
+            leader_id: None,
             log,
             state: NodeState::Follower,
             committed_index: 0,
@@ -60,7 +62,7 @@ impl RaftNode {
     ) -> (AppendEntriesReply, Vec<SideEffect>) {
         let mut side_effects = Vec::new();
 
-        // reject lagacy leader (Paper 5.1)
+        // reject legacy leader (Paper 5.1)
         if args.term < self.current_term {
             side_effects.push(self.build_log_event(&format!("Rejected AppendEntries from Node {} (Term {}): Term too old", args.leader_id, args.term)));
             return (self.reject_append_entries(), side_effects);
@@ -68,6 +70,9 @@ impl RaftNode {
 
         // Paper 5.1
         self.maybe_step_down(args.term, &mut side_effects);
+
+        // Update current leader knowledge for redirection
+        self.leader_id = Some(args.leader_id.clone());
 
         side_effects.push(self.build_log_event(&format!("Received AppendEntries from Node {} (Term {}) with {} entries", args.leader_id, args.term, args.entries.len())));
 
@@ -85,7 +90,7 @@ impl RaftNode {
         }
 
         // Add new entries and handle conflicts (Paper 5.3 Step 3 & 4)
-        // for heartsbeat case that args.entries is empty
+        // for heartbeats case that args.entries is empty
         let mut last_new_entry_index = args.prev_log_index;
         for entry in args.entries {
             last_new_entry_index = entry.index;
@@ -197,6 +202,27 @@ impl RaftNode {
         }
     }
 
+    /// Handle a request from a client to append a new command.
+    /// Redirects the client if this node is not the leader.
+    pub fn handle_client_request(&mut self, args: ClientRequestArgs) -> (ClientRequestReply, Vec<SideEffect>) {
+        let (proposed_info, mut side_effects) = self.propose_command(args.command.clone());
+        
+        if let Some((index, _)) = proposed_info {
+            return (ClientRequestReply {
+                success: true,
+                leader_id: Some(self.id.clone()),
+                response: format!("Command accepted and appended at index {}", index),
+            }, side_effects);
+        }
+
+        // Not the leader, provide redirection hint
+        (ClientRequestReply {
+            success: false,
+            leader_id: self.leader_id.clone(),
+            response: "Not the leader. Please redirect to the current leader.".into(),
+        }, side_effects)
+    }
+
     /// Propose a command to be appended to the log.
     /// Returns `Some((index, term))` if the node is the leader and the command was accepted locally.
     /// The command is NOT committed until a majority of nodes have replicated it.
@@ -267,6 +293,7 @@ impl RaftNode {
         self.state = NodeState::Candidate { votes_received };
         self.current_term += 1;
         self.voted_for = Some(self.id.clone());
+        self.leader_id = None; // clear leader knowledge when starting new election
 
         side_effects.push(self.build_log_event(&format!("Election Timeout -> Transition: {} -> Candidate (Term {})", old_state_str, self.current_term)));
 
@@ -336,6 +363,8 @@ impl RaftNode {
                 next_indices,
                 match_indices,
             };
+
+            self.leader_id = Some(self.id.clone()); // I am the leader
 
             side_effects.push(self.build_log_event(&format!("Won election -> Transition: {} -> Leader", old_state_str)));
 
@@ -451,12 +480,15 @@ impl RaftNode {
                             // Generate ApplyEntry side effects for the newly committed logs
                             while self.committed_index > self.last_applied {
                                 self.last_applied += 1;
-                                if let Some(_applied_entry) = self.log.get(self.last_applied as usize) {
+                                if let Some(applied_entry) = self.log.get(self.last_applied as usize) {
+                                     side_effects.push(SideEffect::ApplyEntry {
+                                        index: self.last_applied,
+                                        command: applied_entry.command.clone(),
+                                    });
                                      side_effects.push(self.build_log_event(&format!(
                                         "Applying command at index {}",
                                         self.last_applied
                                     )));
-                                    // In a real system, you'd yield SideEffect::ApplyEntry here
                                 }
                             }
                         }
@@ -486,6 +518,7 @@ impl RaftNode {
             let old_state_str = self.get_state_str().to_string();
             self.current_term = term;
             self.voted_for = None;
+            self.leader_id = None; // term updated, reset leader knowledge
             self.state = NodeState::Follower;
             side_effects.push(self.build_log_event(&format!(
                 "Term updated ({} -> {}) -> Transition: {} -> Follower",
@@ -1119,11 +1152,11 @@ mod tests {
         let mut follower = setup_node();
         follower.current_term = 1;
         
-        // 模擬跟隨者 (Follower) 已有兩筆日誌但尚未應用 (last_applied = 0)
+        //模擬跟隨者 (Follower) 已有兩筆日誌但尚未應用 (last_applied = 0)
         follower.log.push(LogEntry { term: 1, index: 1, command: "cmd1".into() });
         follower.log.push(LogEntry { term: 1, index: 2, command: "cmd2".into() });
 
-        // 領導者 (Leader) 傳送心跳，通知 commitIndex 已到達 2
+        //領導者 (Leader) 傳送心跳，通知 commitIndex 已到達 2
         let args = AppendEntriesArgs {
             term: 1,
             leader_id: "node-2".into(),
@@ -1135,9 +1168,9 @@ mod tests {
 
         let (_, side_effects) = follower.handle_append_entries(args);
 
-        // 驗證：提交索引 (committed_index) 應更新為 2
+        //驗證：提交索引 (committed_index) 應更新為 2
         assert_eq!(follower.committed_index, 2);
-        // 驗證：已應用索引 (last_applied) 應同步追趕至 2 (目前此處會失敗，達成紅燈)
+        //驗證：已應用索引 (last_applied) 應同步追趕至 2 (目前此處會失敗，達成紅燈)
         assert_eq!(follower.last_applied, 2, "Follower should advance last_applied up to committed_index");
         
         // Verification: check if 2 Apply events are generated
@@ -1180,5 +1213,33 @@ mod tests {
             matches!(se, SideEffect::BroadcastAppendEntries(args) if args.entries.len() == 1)
         });
         assert!(found_broadcast, "Leader should broadcast the new entry immediately");
+    }
+
+    #[test]
+    fn test_follower_redirects_client_request_to_known_leader() {
+        let mut follower = setup_node();
+        follower.current_term = 1;
+        
+        // Follower learns about Leader B via AppendEntries
+        let args = AppendEntriesArgs {
+            term: 1,
+            leader_id: "node-B".into(),
+            prev_log_index: 0,
+            prev_log_term: 0,
+            entries: vec![],
+            leader_commit: 0,
+        };
+        follower.handle_append_entries(args);
+
+        // Client sends a request to this follower
+        let client_args = ClientRequestArgs {
+            command: "set y=20".into(),
+        };
+        
+        // Call the expected method `handle_client_request` (Red Phase: compilation failure)
+        let (reply, _) = follower.handle_client_request(client_args);
+        
+        assert_eq!(reply.success, false);
+        assert_eq!(reply.leader_id, Some("node-B".to_string()), "Follower should provide redirection hint");
     }
 }
