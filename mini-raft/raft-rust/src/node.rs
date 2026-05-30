@@ -1062,4 +1062,41 @@ mod tests {
         // it's from an older term (Term 2), so committed_index shouldn't advance directly.
         assert_eq!(leader.committed_index, 0, "Leader should NOT commit old term logs directly (Figure 8 Safety)");
     }
+
+    #[test]
+    fn test_follower_advances_last_applied_on_leader_commit() {
+        let mut follower = setup_node();
+        follower.current_term = 1;
+        
+        // 模擬跟隨者 (Follower) 已有兩筆日誌但尚未應用 (last_applied = 0)
+        follower.log.push(LogEntry { term: 1, index: 1, command: "cmd1".into() });
+        follower.log.push(LogEntry { term: 1, index: 2, command: "cmd2".into() });
+
+        // 領導者 (Leader) 傳送心跳，通知 commitIndex 已到達 2
+        let args = AppendEntriesArgs {
+            term: 1,
+            leader_id: "node-2".into(),
+            prev_log_index: 2,
+            prev_log_term: 1,
+            entries: vec![],
+            leader_commit: 2,
+        };
+
+        let (_, side_effects) = follower.handle_append_entries(args);
+
+        // 驗證：提交索引 (committed_index) 應更新為 2
+        assert_eq!(follower.committed_index, 2);
+        // 驗證：已應用索引 (last_applied) 應同步追趕至 2 (目前此處會失敗，達成紅燈)
+        assert_eq!(follower.last_applied, 2, "Follower should advance last_applied up to committed_index");
+        
+        // 驗證：應產生 2 個狀態機應用事件 (Apply events)
+        let apply_count = side_effects.iter().filter(|se| {
+            if let SideEffect::LogMessage(m) = se {
+                m.contains("Applying command at index")
+            } else {
+                false
+            }
+        }).count();
+        assert_eq!(apply_count, 2, "Should generate 2 Apply events");
+    }
 }
