@@ -112,6 +112,21 @@ impl RaftNode {
             self.committed_index = std::cmp::min(args.leader_commit, last_new_entry_index);
             if self.committed_index > old_commit {
                 side_effects.push(self.build_log_event(&format!("Updated committed_index to {}", self.committed_index)));
+                
+                // Advance last_applied and yield ApplyEntry side effects
+                while self.committed_index > self.last_applied {
+                    self.last_applied += 1;
+                    if let Some(applied_entry) = self.log.get(self.last_applied as usize) {
+                        side_effects.push(SideEffect::ApplyEntry {
+                            index: self.last_applied,
+                            command: applied_entry.command.clone(),
+                        });
+                        side_effects.push(self.build_log_event(&format!(
+                            "Applying command at index {}",
+                            self.last_applied
+                        )));
+                    }
+                }
             }
         }
 
