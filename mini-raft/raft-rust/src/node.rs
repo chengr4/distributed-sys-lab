@@ -1104,7 +1104,7 @@ mod tests {
         // 驗證：已應用索引 (last_applied) 應同步追趕至 2 (目前此處會失敗，達成紅燈)
         assert_eq!(follower.last_applied, 2, "Follower should advance last_applied up to committed_index");
         
-        // 驗證：應產生 2 個狀態機應用事件 (Apply events)
+        // Verification: check if 2 Apply events are generated
         let apply_count = side_effects.iter().filter(|se| {
             if let SideEffect::LogMessage(m) = se {
                 m.contains("Applying command at index")
@@ -1113,5 +1113,31 @@ mod tests {
             }
         }).count();
         assert_eq!(apply_count, 2, "Should generate 2 Apply events");
+    }
+
+    #[test]
+    fn test_leader_appends_and_broadcasts_client_command() {
+        let mut leader = setup_node();
+        leader.state = NodeState::Leader {
+            next_indices: HashMap::new(),
+            match_indices: HashMap::new(),
+        };
+        leader.current_term = 2;
+
+        let cmd = "set x=10".to_string();
+        // Call the expected method (will fail to compile, establishing Red Phase)
+        let (success, side_effects) = leader.handle_client_command(cmd.clone());
+
+        assert!(success);
+        // Verify local log append
+        assert_eq!(leader.log.len(), 2);
+        assert_eq!(leader.log.last().unwrap().command, cmd);
+        assert_eq!(leader.log.last().unwrap().term, 2);
+
+        // Verify immediate broadcast side effect
+        let found_broadcast = side_effects.iter().any(|se| {
+            matches!(se, SideEffect::BroadcastAppendEntries(args) if args.entries.len() == 1)
+        });
+        assert!(found_broadcast, "Leader should broadcast the new entry immediately");
     }
 }
