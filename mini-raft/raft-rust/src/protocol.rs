@@ -58,6 +58,18 @@ pub struct AppendEntriesReply {
     pub match_index: u64, // index of the last log entry that matches of Follower
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct ClientRequestArgs {
+    pub command: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct ClientRequestReply {
+    pub success: bool,
+    pub leader_id: Option<String>, // Hint for redirection
+    pub response: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct Message {
