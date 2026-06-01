@@ -205,7 +205,7 @@ impl RaftNode {
     /// Handle a request from a client to append a new command.
     /// Redirects the client if this node is not the leader.
     pub fn handle_client_request(&mut self, args: ClientRequestArgs) -> (ClientRequestReply, Vec<SideEffect>) {
-        let (proposed_info, mut side_effects) = self.propose_command(args.command.clone());
+        let (proposed_info, side_effects) = self.propose_command(args.command.clone());
         
         if let Some((index, _)) = proposed_info {
             return (ClientRequestReply {

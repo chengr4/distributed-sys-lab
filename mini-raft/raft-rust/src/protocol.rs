@@ -75,8 +75,8 @@ pub struct ClientRequestReply {
 pub struct Message {
     pub from: String,
     pub to: String,
-    pub r#type: String, // 'type' is a reserved keyword in Rust, use r# prefix
-    pub payload: Vec<u8>,
+    pub r#type: String, // 'type' is a reserved keyword in Rust, use r# prefix. request_vote, append_entries etc.
+    pub payload: serde_json::Value,
 }
 
 // The dicision of RaftNode (brain); Relay and engine (body) will execute the side effects
