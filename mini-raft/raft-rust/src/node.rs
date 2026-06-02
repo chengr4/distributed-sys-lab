@@ -140,6 +140,8 @@ impl RaftNode {
             success: true,
             match_index: last_new_entry_index,
         };
+        
+        side_effects.push(self.build_log_event(&format!("Sent AppendEntriesReply (Success) to Node {}", args.leader_id)));
 
         (reply, side_effects)
     }
@@ -399,6 +401,13 @@ impl RaftNode {
         // Defensive check: Only process replies that belong to the current term's leadership.
         if follower_reply.term != self.current_term {
             return side_effects;
+        }
+
+        // Log the receipt of the reply before mutably borrowing self.state
+        if follower_reply.success {
+            side_effects.push(self.build_log_event(&format!("Received AppendEntriesReply (Success) from Node {} (match_index: {})", from, follower_reply.match_index)));
+        } else {
+            side_effects.push(self.build_log_event(&format!("Received AppendEntriesReply (Failure) from Node {}", from)));
         }
 
         let mut should_check_commit = false;
