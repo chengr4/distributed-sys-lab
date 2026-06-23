@@ -22,25 +22,19 @@ impl EngineState {
         Self {
             election_tick_count: 0,
             heartbeat_tick_count: 0,
-            election_timeout_limit: rng.gen_range(30..60), // 3.0s to 6.0s
+            election_timeout_limit: rng.gen_range(30..150), // 1.5s to 7.5s (with 50ms ticks)
         }
     }
 
     fn reset_election_timer(&mut self) {
         let mut rng = rand::thread_rng();
         self.election_tick_count = 0;
-        self.election_timeout_limit = rng.gen_range(30..60);
+        self.election_timeout_limit = rng.gen_range(30..150);
     }
 
     fn reset_heartbeat_timer(&mut self) {
         self.heartbeat_tick_count = 0;
     }
-}
-
-struct OutgoingMessage {
-    to: String,
-    msg_type: String,
-    payload_bytes: Vec<u8>,
 }
 
 fn main() {
@@ -59,16 +53,14 @@ fn main() {
     let engine_state = Arc::new(Mutex::new(EngineState::new()));
     
     // Create a channel for outgoing messages to avoid blocking the main loop
-    let (tx, rx) = mpsc::channel::<OutgoingMessage>();
+    let (tx, rx) = mpsc::channel::<Message>();
     let relay_addr_sender = relay_addr.clone();
-    let id_sender = id.clone();
     
     thread::spawn(move || {
         for msg in rx {
             let r_addr = relay_addr_sender.clone();
-            let f_id = id_sender.clone();
             thread::spawn(move || {
-                send_to_relay_raw(&r_addr, &f_id, &msg.to, &msg.msg_type, &msg.payload_bytes);
+                send_to_relay_raw(&r_addr, msg);
             });
         }
     });
@@ -105,11 +97,16 @@ fn main() {
         }
     });
 
+    // Startup Jitter: Break lockstep if multiple nodes start at the same time
+    let mut rng = rand::thread_rng();
+    let jitter = rng.gen_range(0..500);
+    thread::sleep(Duration::from_millis(jitter));
+
     // Main Tick Loop: Simulate randomized election timeout and periodic heartbeats
-    let heartbeat_interval = 3; // 300ms
+    let heartbeat_interval = 6; // 300ms (with 50ms ticks)
 
     loop {
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(50));
         
         let mut n = node.lock().unwrap();
         let mut e = engine_state.lock().unwrap();
@@ -135,7 +132,7 @@ fn main() {
     }
 }
 
-fn handle_connection(stream: TcpStream, node: Arc<Mutex<RaftNode>>, engine_state: Arc<Mutex<EngineState>>, tx: mpsc::Sender<OutgoingMessage>, _relay_addr: String) {
+fn handle_connection(stream: TcpStream, node: Arc<Mutex<RaftNode>>, engine_state: Arc<Mutex<EngineState>>, tx: mpsc::Sender<Message>, _relay_addr: String) {
     let reader = BufReader::new(&stream);
     for line in reader.lines() {
         if let Ok(line) = line {
@@ -150,36 +147,53 @@ fn handle_connection(stream: TcpStream, node: Arc<Mutex<RaftNode>>, engine_state
             let mut n = node.lock().unwrap();
             let mut e = engine_state.lock().unwrap();
             
+            // Convert Value payload back to bytes for typed deserialization
+            let payload_bytes = serde_json::to_vec(&msg.payload).unwrap();
+
             let effects = match msg.r#type.as_str() {
                 "AppendEntries" => {
-                    let args: AppendEntriesArgs = serde_json::from_slice(&msg.payload).expect("Payload mismatch: AppendEntries");
+                    let args: AppendEntriesArgs = serde_json::from_slice(&payload_bytes).expect("Payload mismatch: AppendEntries");
                     let (reply, effects) = n.handle_append_entries(args);
-                    let payload_bytes = serde_json::to_vec(&reply).unwrap();
-                    let _ = tx.send(OutgoingMessage {
+                    let reply_payload = serde_json::to_value(&reply).unwrap();
+                    let _ = tx.send(Message {
+                        from: n.id.clone(),
                         to: msg.from.clone(),
-                        msg_type: "AppendReply".to_string(),
-                        payload_bytes,
+                        r#type: "AppendReply".to_string(),
+                        payload: reply_payload,
                     });
                     effects
                 }
                 "RequestVote" => {
-                    let args: RequestVoteArgs = serde_json::from_slice(&msg.payload).expect("Payload mismatch: RequestVote");
+                    let args: RequestVoteArgs = serde_json::from_slice(&payload_bytes).expect("Payload mismatch: RequestVote");
                     let (reply, effects) = n.handle_request_vote(args);
-                    let payload_bytes = serde_json::to_vec(&reply).unwrap();
-                    let _ = tx.send(OutgoingMessage {
+                    let reply_payload = serde_json::to_value(&reply).unwrap();
+                    let _ = tx.send(Message {
+                        from: n.id.clone(),
                         to: msg.from.clone(),
-                        msg_type: "VoteReply".to_string(),
-                        payload_bytes,
+                        r#type: "VoteReply".to_string(),
+                        payload: reply_payload,
                     });
                     effects
                 }
                 "AppendReply" => {
-                    let reply: AppendEntriesReply = serde_json::from_slice(&msg.payload).expect("Payload mismatch: AppendReply");
+                    let reply: AppendEntriesReply = serde_json::from_slice(&payload_bytes).expect("Payload mismatch: AppendReply");
                     n.handle_append_entries_reply(msg.from.clone(), reply)
                 }
                 "VoteReply" => {
-                    let reply: RequestVoteReply = serde_json::from_slice(&msg.payload).expect("Payload mismatch: VoteReply");
+                    let reply: RequestVoteReply = serde_json::from_slice(&payload_bytes).expect("Payload mismatch: VoteReply");
                     n.handle_request_vote_reply(msg.from.clone(), reply)
+                }
+                "ClientRequest" => {
+                    let args: raft_rust::protocol::ClientRequestArgs = serde_json::from_slice(&payload_bytes).expect("Payload mismatch: ClientRequest");
+                    let (reply, effects) = n.handle_client_request(args);
+                    let reply_payload = serde_json::to_value(&reply).unwrap();
+                    let _ = tx.send(Message {
+                        from: n.id.clone(),
+                        to: msg.from.clone(),
+                        r#type: "ClientReply".to_string(),
+                        payload: reply_payload,
+                    });
+                    effects
                 }
                 _ => vec![],
             };
@@ -189,35 +203,43 @@ fn handle_connection(stream: TcpStream, node: Arc<Mutex<RaftNode>>, engine_state
     }
 }
 
-fn execute_effects(node: &mut RaftNode, engine_state: &mut EngineState, tx: &mpsc::Sender<OutgoingMessage>, effects: Vec<SideEffect>) {
+fn execute_effects(node: &mut RaftNode, engine_state: &mut EngineState, tx: &mpsc::Sender<Message>, effects: Vec<SideEffect>) {
     for effect in effects {
         match effect {
             SideEffect::LogMessage(m) => println!("{}", m),
+            SideEffect::ApplyEntry { index, command } => {
+                // In a real system, this is where you'd write to a database or trigger business logic.
+                // For this lab, we acknowledge the application and could update a local view.
+                println!("[Node={}] *** STATE MACHINE APPLY *** Index: {}, Command: '{}'", node.id, index, command);
+            }
             SideEffect::SendAppendEntries(target, args) => {
-                let payload_bytes = serde_json::to_vec(&args).unwrap();
-                let _ = tx.send(OutgoingMessage {
+                let payload = serde_json::to_value(&args).unwrap();
+                let _ = tx.send(Message {
+                    from: node.id.clone(),
                     to: target,
-                    msg_type: "AppendEntries".to_string(),
-                    payload_bytes,
+                    r#type: "AppendEntries".to_string(),
+                    payload,
                 });
             }
             SideEffect::BroadcastAppendEntries(args) => {
-                let payload_bytes = serde_json::to_vec(&args).unwrap();
+                let payload = serde_json::to_value(&args).unwrap();
                 for peer in &node.peers {
-                    let _ = tx.send(OutgoingMessage {
+                    let _ = tx.send(Message {
+                        from: node.id.clone(),
                         to: peer.clone(),
-                        msg_type: "AppendEntries".to_string(),
-                        payload_bytes: payload_bytes.clone(),
+                        r#type: "AppendEntries".to_string(),
+                        payload: payload.clone(),
                     });
                 }
             }
             SideEffect::BroadcastRequestVote(args) => {
-                let payload_bytes = serde_json::to_vec(&args).unwrap();
+                let payload = serde_json::to_value(&args).unwrap();
                 for peer in &node.peers {
-                    let _ = tx.send(OutgoingMessage {
+                    let _ = tx.send(Message {
+                        from: node.id.clone(),
                         to: peer.clone(),
-                        msg_type: "RequestVote".to_string(),
-                        payload_bytes: payload_bytes.clone(),
+                        r#type: "RequestVote".to_string(),
+                        payload: payload.clone(),
                     });
                 }
             }
@@ -227,19 +249,11 @@ fn execute_effects(node: &mut RaftNode, engine_state: &mut EngineState, tx: &mps
             SideEffect::ResetHeartbeatTimer => {
                 engine_state.reset_heartbeat_timer();
             }
-            _ => {}
         }
     }
 }
 
-fn send_to_relay_raw(relay_addr: &str, from: &str, to: &str, msg_type: &str, payload_bytes: &[u8]) {
-    let msg = Message {
-        from: from.to_string(),
-        to: to.to_string(),
-        r#type: msg_type.to_string(),
-        payload: payload_bytes.to_vec(),
-    };
-    
+fn send_to_relay_raw(relay_addr: &str, msg: Message) {
     match TcpStream::connect(relay_addr) {
         Ok(mut stream) => {
             let json = serde_json::to_string(&msg).unwrap();
@@ -248,4 +262,3 @@ fn send_to_relay_raw(relay_addr: &str, from: &str, to: &str, msg_type: &str, pay
         Err(e) => eprintln!("Failed to connect to Relay at {}: {}", relay_addr, e),
     }
 }
-

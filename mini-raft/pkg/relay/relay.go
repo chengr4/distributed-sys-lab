@@ -1,11 +1,96 @@
 package relay
-
 import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
 	"math/rand/v2"
 	"mini-raft/pkg/raft"
+	"net"
 	"sync"
+	"syscall"
 	"time"
 )
+
+// Action and Filter definitions...
+
+// ServeTCP starts the network service for the relay.
+func (r *Relay) ServeTCP(port string) error {
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				// Enable address reuse to avoid TIME_WAIT issues
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			})
+		},
+	}
+
+	listener, err := lc.Listen(context.Background(), "tcp", "0.0.0.0:"+port)
+	if err != nil {
+		return err
+	}
+
+	r.rwmu.Lock()
+	r.listener = listener
+	r.rwmu.Unlock()
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return // Listener was closed
+			}
+			go r.handleConnection(conn)
+		}
+	}()
+
+	return nil
+}
+
+// Stop closes the relay listener.
+func (r *Relay) Stop() {
+	r.rwmu.Lock()
+	defer r.rwmu.Unlock()
+	if r.listener != nil {
+		r.listener.Close()
+	}
+}
+
+func (r *Relay) handleConnection(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+
+		var msg raft.Message
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			continue
+		}
+
+		addr, action := r.ResolveTarget(&msg)
+		if action == Drop {
+			continue
+		}
+
+		// Forwarding logic
+		go r.forward(addr, line)
+		if action == Duplicate {
+			go r.forward(addr, line)
+		}
+	}
+}
+
+func (r *Relay) forward(addr string, line string) {
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	fmt.Fprint(conn, line)
+}
 
 // Action defines what the relay should do with a message.
 type Action int
@@ -124,6 +209,7 @@ type Relay struct {
 	rwmu         sync.RWMutex
 	routingTable map[string]string // NodeID -> Network Address
 	filters      []Filter
+	listener     net.Listener
 }
 
 // AddFilter registers a new filter to the relay.
@@ -131,6 +217,13 @@ func (r *Relay) AddFilter(filter Filter) {
 	r.rwmu.Lock()
 	defer r.rwmu.Unlock()
 	r.filters = append(r.filters, filter)
+}
+
+// ClearFilters removes all registered filters.
+func (r *Relay) ClearFilters() {
+	r.rwmu.Lock()
+	defer r.rwmu.Unlock()
+	r.filters = make([]Filter, 0)
 }
 
 // ResolveTarget determines the destination address and the action to take.

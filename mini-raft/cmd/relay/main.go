@@ -22,6 +22,7 @@ func main() {
 	r.RegisterNode("A", "127.0.0.1:9001")
 	r.RegisterNode("B", "127.0.0.1:9002")
 	r.RegisterNode("C", "127.0.0.1:9003")
+	r.RegisterNode("Client", "127.0.0.1:9999")
 
 	// Use ListenConfig to set SO_REUSEADDR via Control function
 	lc := net.ListenConfig{
